@@ -691,6 +691,11 @@ enum EnvironmentSSAOQuality {
 	ENV_SSAO_QUALITY_ULTRA,
 };
 
+enum EnvironmentSSAOType {
+	ENV_SSAO_TYPE_ASSAO,
+	ENV_SSAO_TYPE_GTAO,
+};
+
 enum EnvironmentSSILQuality {
 	ENV_SSIL_QUALITY_VERY_LOW,
 	ENV_SSIL_QUALITY_LOW,

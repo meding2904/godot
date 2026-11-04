@@ -1480,11 +1480,12 @@
 		<method name="environment_set_ssao_quality">
 			<return type="void" />
 			<param index="0" name="quality" type="int" enum="RenderingServer.EnvironmentSSAOQuality" />
-			<param index="1" name="half_size" type="bool" />
-			<param index="2" name="adaptive_target" type="float" />
-			<param index="3" name="blur_passes" type="int" />
-			<param index="4" name="fadeout_from" type="float" />
-			<param index="5" name="fadeout_to" type="float" />
+			<param index="1" name="type" type="int" enum="RenderingServer.EnvironmentSSAOType" />
+			<param index="2" name="half_size" type="bool" />
+			<param index="3" name="adaptive_target" type="float" />
+			<param index="4" name="blur_passes" type="int" />
+			<param index="5" name="fadeout_from" type="float" />
+			<param index="6" name="fadeout_to" type="float" />
 			<description>
 				Sets the quality level of the screen-space ambient occlusion (SSAO) post-process effect. See [Environment] for more details.
 			</description>
@@ -5791,6 +5792,12 @@
 		</constant>
 		<constant name="ENV_SSAO_QUALITY_ULTRA" value="4" enum="EnvironmentSSAOQuality">
 			Highest quality screen-space ambient occlusion. Uses the adaptive target setting which can be dynamically adjusted to smoothly balance performance and visual quality.
+		</constant>
+		<constant name="ENV_SSAO_TYPE_ASSAO" value="0" enum="EnvironmentSSAOType">
+			Adaptive Screen Space Ambient Occlusion (ASSAO) by Intel. Cheap and well-tested default.
+		</constant>
+		<constant name="ENV_SSAO_TYPE_GTAO" value="1" enum="EnvironmentSSAOType">
+			Ground Truth Ambient Occlusion (GTAO), based on Intel's XeGTAO. More physically accurate horizon-based ambient occlusion that typically looks more uniform across surfaces, at a higher performance cost than [constant ENV_SSAO_TYPE_ASSAO].
 		</constant>
 		<constant name="ENV_SSIL_QUALITY_VERY_LOW" value="0" enum="EnvironmentSSILQuality">
 			Lowest quality of screen-space indirect lighting.

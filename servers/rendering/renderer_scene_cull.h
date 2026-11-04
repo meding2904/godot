@@ -1333,7 +1333,7 @@ public:
 	PASS1RC(float, environment_get_ssao_direct_light_affect, RID)
 	PASS1RC(float, environment_get_ssao_ao_channel_affect, RID)
 
-	PASS6(environment_set_ssao_quality, RSE::EnvironmentSSAOQuality, bool, float, int, float, float)
+	PASS7(environment_set_ssao_quality, RSE::EnvironmentSSAOQuality, RSE::EnvironmentSSAOType, bool, float, int, float, float)
 
 	// SSIL
 	PASS6(environment_set_ssil, RID, bool, float, float, float, float)
