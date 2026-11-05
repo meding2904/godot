@@ -1,0 +1,50 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/free_camera.gd" id="1_cam"]
+[ext_resource type="Shader" path="res://shaders/screen_copy.gdshader" id="2_copy"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.2, 0.39, 0.66, 1)
+sky_horizon_color = Color(0.72, 0.8, 0.88, 1)
+
+[sub_resource type="Sky" id="Sky_main"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 2
+sky = SubResource("Sky_main")
+
+[sub_resource type="ShaderMaterial" id="Mat_copy"]
+shader = ExtResource("2_copy")
+
+[sub_resource type="QuadMesh" id="Mesh_copy"]
+size = Vector2(3, 3)
+material = SubResource("Mat_copy")
+
+[node name="ScreenProbe" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 6)
+script = ExtResource("1_cam")
+look_target = Vector3(0, 1, 0)
+
+[node name="CopyQuad" type="MeshInstance3D" parent="Camera3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.5)
+cast_shadow = 0
+mesh = SubResource("Mesh_copy")
+
+[node name="MarkerBox" type="CSGBox3D" parent="."]
+transform = Transform3D(2, 0, 0, 0, 2, 0, 0, 0, 2, 2.5, 1.2, 0)
+
+[node name="Info" type="CanvasLayer" parent="."]
+
+[node name="Label" type="Label" parent="Info"]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 1100.0
+offset_bottom = 80.0
+text = "Screen-copy probe: this quad must be invisible.
+If it is washed out or white, the screen-texture capture is broken."

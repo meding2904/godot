@@ -35,6 +35,7 @@
 #include "water_buoyancy_3d.h"
 #include "water_ripple_probe.h"
 #include "water_spray_3d.h"
+#include "water_underwater_effect.h"
 #include "water_wake_3d.h"
 
 #include "core/object/class_db.h"
@@ -46,6 +47,7 @@ void initialize_water_module(ModuleInitializationLevel p_level) {
 
 	GDREGISTER_CLASS(WaterRippleProbe);
 	GDREGISTER_CLASS(WaterBody3D);
+	GDREGISTER_CLASS(WaterUnderwaterEffect);
 	GDREGISTER_CLASS(WaterBuoyancy3D);
 	GDREGISTER_CLASS(WaterBoat3D);
 	GDREGISTER_CLASS(WaterWake3D);

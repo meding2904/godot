@@ -1,0 +1,70 @@
+[gd_scene load_steps=9 format=3]
+
+[ext_resource type="Script" path="res://scripts/free_camera.gd" id="1_cam"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.2, 0.38, 0.62, 1)
+sky_horizon_color = Color(0.72, 0.79, 0.85, 1)
+
+[sub_resource type="Sky" id="Sky_main"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 2
+sky = SubResource("Sky_main")
+tonemap_mode = 2
+fog_enabled = true
+fog_light_color = Color(0.7, 0.78, 0.84, 1)
+fog_density = 0.001
+
+[sub_resource type="StandardMaterial3D" id="Mat_floor"]
+albedo_color = Color(0.78, 0.7, 0.54, 1)
+roughness = 0.9
+
+[sub_resource type="PlaneMesh" id="Mesh_floor"]
+material = SubResource("Mat_floor")
+size = Vector2(80, 80)
+
+[sub_resource type="StandardMaterial3D" id="Mat_rock"]
+albedo_color = Color(0.35, 0.33, 0.3, 1)
+
+[sub_resource type="BoxMesh" id="Mesh_rock"]
+material = SubResource("Mat_rock")
+size = Vector3(2, 1.2, 2)
+
+[node name="Refraction" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-55, 20, 0)
+shadow_enabled = true
+
+[node name="Floor" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2, 0)
+mesh = SubResource("Mesh_floor")
+
+[node name="Rock" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, -1.4, -2)
+mesh = SubResource("Mesh_rock")
+
+[node name="Rock2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, -1.5, 1)
+mesh = SubResource("Mesh_rock")
+
+[node name="WaterBody3D" type="WaterBody3D" parent="."]
+domain_size = Vector2(40, 40)
+ocean_domain_size = Vector2(60, 60)
+ocean_grid_resolution = 128
+grid_resolution = 128
+render_extent = 80.0
+wind_speed = 5.0
+wave_amplitude = 0.35
+choppiness = 0.8
+screen_space = true
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4, 12)
+script = ExtResource("1_cam")
+look_target = Vector3(0, -2, 0)

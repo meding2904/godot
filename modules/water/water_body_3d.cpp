@@ -30,21 +30,30 @@
 
 #include "water_body_3d.h"
 
+#include "water_underwater_effect.h"
 #include "water_wake_3d.h"
 
 #include "core/config/engine.h"
+#include "core/io/image.h"
 #include "core/math/face3.h"
 #include "core/object/class_db.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/light_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
+#include "scene/main/window.h"
 #include "scene/resources/3d/primitive_meshes.h"
+#include "scene/resources/3d/sky_material.h"
 #include "scene/resources/3d/world_3d.h"
+#include "scene/resources/environment.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/shader.h"
+#include "scene/resources/sky.h"
 #include "scene/resources/texture_rd.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
@@ -55,18 +64,17 @@ namespace {
 // sampled directly from the solver's shared-RenderingDevice textures via
 // Texture2DRD; the separate CPU readback cache is only for sample_height().
 //
-// Real transparency via Godot's own GPU alpha blending (ALPHA, blend_mix),
-// not manual screen-space refraction. An earlier version manually sampled
-// hint_screen_texture and composited by hand -- confirmed via direct testing
-// that this custom engine build's screen-texture capture reads severely
-// overbright (even attenuated to 15% strength it still blew the surface to
-// solid white; the engine has no REFRACTION built-in either, confirmed
-// directly against servers/rendering/shader_types.cpp, so that wasn't an
-// option). Real GPU alpha blending sidesteps the broken capture path
-// entirely -- the renderer composites against whatever's already correctly
-// drawn underneath, no re-sampling needed. Loses the distortion detail a
-// real refraction offset would add; not worth it while the capture itself
-// is broken.
+// Two transparency paths, one material source:
+// - Default: Godot's own GPU alpha blending (ALPHA, blend_mix) over the
+//   scene, plus the depth buffer for soft contact edges and view-ray
+//   absorption. No screen-color sampling, so it costs no extra pass.
+// - WaterBody3D.screen_space: the material is rebuilt with
+//   `#define WATER_SCREEN_SPACE` and samples the color buffer for refraction.
+//   Off by default: an earlier manual screen-space composite on this build
+//   read severely overbright (even at 15% strength it blew the surface to
+//   solid white, and the engine has no REFRACTION built-in -- checked against
+//   servers/rendering/shader_types.cpp). The toggle exists so that can be
+//   re-tested on a real GPU; until then the alpha-blended path is what ships.
 //
 // Real per-vertex normals from a central-difference of the SAME combined
 // height field the vertex is displaced by -- the surface used to move but
@@ -180,6 +188,60 @@ uniform vec4 wet_sand_color : source_color = vec4(0.16, 0.12, 0.07, 0.45);
 uniform float swash_wave_height = 0.3;
 // Thin bright foam rim just behind the moving edge.
 uniform float shore_rim_strength : hint_range(0.0, 1.0) = 0.8;
+
+// --- Shading (Phase 1) ---------------------------------------------------
+// This material is unshaded and alpha blended (see the comment above), so it
+// has no scene lights of its own: the sun and sky below are set by
+// WaterBody3D from the scene's DirectionalLight3D and ProceduralSkyMaterial.
+// Every term stays bounded on purpose -- this is a tint on top of an already
+// lit scene, not a second PBR response.
+uniform vec3 sun_direction = vec3(0.3, 0.85, 0.4); // from the surface toward the sun, world space
+uniform vec3 sun_color = vec3(1.0, 0.96, 0.9);
+uniform float sun_energy = 1.0;
+uniform vec3 sky_zenith_color = vec3(0.13, 0.30, 0.62);
+uniform vec3 sky_horizon_color = vec3(0.62, 0.73, 0.86);
+uniform vec3 sky_ground_color = vec3(0.08, 0.14, 0.20);
+uniform float reflection_strength = 1.0;
+uniform float specular_strength = 0.45;
+uniform float specular_shininess = 480.0;
+uniform float crest_sss = 0.6;
+uniform vec3 crest_sss_color = vec3(0.06, 0.38, 0.33);
+// Surface amplitude in meters (WaterBody3D::wave_amplitude), for normalizing
+// the crest height the subsurface glow uses.
+uniform float wave_amplitude = 1.0;
+// Tiling detail normal, scrolled over the surface: the FFT supplies the
+// large-scale normals, this adds the fine surface texture.
+uniform sampler2D detail_normal : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform float detail_normal_strength = 0.35;
+uniform float detail_normal_scale = 0.35;
+uniform float detail_normal_speed = 0.35;
+// Distance (m) over which high-frequency shading is band-limited: procedural
+// foam lace melts to its average, the sun glint widens and dims, and the
+// per-pixel normals flatten toward up. Without this, detail smaller than a
+// distant pixel aliases into shimmer.
+uniform float distance_fade_start = 100.0;
+uniform float distance_fade_end = 650.0;
+
+// 0 low (no detail normals, no crest SSS), 1 medium, 2 high. Set by
+// WaterBody3D::quality.
+uniform int shading_quality = 2;
+
+// --- Depth (Phase 1) -----------------------------------------------------
+// Opaque depth, for soft contact edges and depth-based absorption: water with
+// a long view ray through it keeps the deep color, thin water stays clear.
+uniform sampler2D depth_texture : hint_depth_texture, filter_nearest;
+uniform float soft_edge_distance = 0.4;
+uniform float absorption = 0.22; // per meter of view-ray water
+uniform vec3 deep_color = vec3(0.02, 0.09, 0.13);
+
+// --- Screen space (Phase 2) ----------------------------------------------
+// Only compiled when the material's shader is built with
+// `#define WATER_SCREEN_SPACE` (WaterBody3D.screen_space, off by default).
+#ifdef WATER_SCREEN_SPACE
+uniform sampler2D screen_texture : hint_screen_texture, filter_linear, repeat_disable;
+uniform float refraction_strength = 0.02; // UV offset at full wave slope
+uniform float refraction_mix = 0.9;
+#endif
 
 varying vec3 v_world_normal;
 varying float v_foam;
@@ -311,20 +373,23 @@ float foam_value_noise(vec2 p) {
 
 // Visible foam for the water resting at world_xz: the persistent foam amount,
 // eroded by fixed-to-the-water noise so it breaks into lace as it fades.
-float foam_at(vec2 world_xz) {
+float foam_at(vec2 world_xz, float far_filter) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 cuv_o = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic -- anchored to the WORLD, so moving grid_center (a re-centre) never slides the waves
 	float fade = fade_r(world_xz, cuv_r);
 	float amount = texture(ocean_foam_tex, cuv_o).r * fade;
 	// Wake foam at the displaced position, as surface_offset() reads the wake.
-	amount = max(amount, wake_foam(world_xz - choppiness * fade * texture(ocean_disp_tex, cuv_o).rg));
+	amount = max(amount, wake_foam(world_xz - choppiness * fade * texture(ocean_disp_tex, cuv_o).rg) * (1.0 - far_filter));
 	vec2 p = world_xz * foam_detail_scale;
 	float n = 0.5 * foam_value_noise(p) + 0.3 * foam_value_noise(p * 2.7 + 17.0) + 0.2 * foam_value_noise(p * 7.3 - 5.0);
+	// Past a few hundred meters one noise cell is smaller than a pixel: use
+	// its average instead of its loop, or the lace shimmers as you move.
+	n = mix(n, 0.5, far_filter);
 	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and
 	// lacy as the noise eats into it, rather than cutting off at an edge.
 	float f = clamp(amount * (1.0 + foam_breakup) - n * foam_breakup, 0.0, 1.0);
-	return f * f * (3.0 - 2.0 * f);
+	return f * f * (3.0 - 2.0 * f) * mix(1.0, 0.4, far_filter);
 }
 
 // Visible shore foam at world_xz: finer, heavier lace at partial strength.
@@ -340,10 +405,11 @@ vec2 shore_pattern_uv(vec2 world_xz) {
 	return 1.0 - abs(mod(u, 2.0) - 1.0);
 }
 
-float shore_foam_at(vec2 world_xz) {
+float shore_foam_at(vec2 world_xz, float far_filter) {
 	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 q = world_xz * foam_detail_scale * 2.2 + 31.0;
 	float ns = 0.5 * foam_value_noise(q) + 0.5 * foam_value_noise(q * 2.3 - 11.0);
+	ns = mix(ns, 0.5, far_filter);
 	float shore = texture(shore_foam_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
 	float g = clamp(shore * (1.0 + shore_foam_breakup) - ns * shore_foam_breakup, 0.0, 1.0);
 	return g * g * (3.0 - 2.0 * g) * shore_foam_strength;
@@ -353,7 +419,7 @@ float shore_foam_at(vec2 world_xz) {
 // offset in [0, swash_reach] -- small under an arriving crest (the edge
 // reaches in), large between crests, jittered by slow noise. <= 0 is past
 // the visible edge.
-float shore_signal(vec2 world_xz, float time) {
+float shore_signal(vec2 world_xz, float time, float far_filter) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 cuv_o = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic -- anchored to the WORLD, so moving grid_center (a re-centre) never slides the waves
@@ -367,6 +433,10 @@ float shore_signal(vec2 world_xz, float time) {
 	float offset = swash_reach * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
 	vec2 q = world_xz * shore_detail_scale;
 	float eb = 0.5 * foam_value_noise(q * 2.3 + vec2(time * 0.25, 0.0)) + 0.3 * foam_value_noise(q * 6.1 + vec2(3.0, time * 0.4)) + 0.2 * foam_value_noise(q * 15.0 - 7.0);
+	// Far away, one cell of either noise is sub-pixel: drop the jitter, or
+	// the waterline crawls as the camera moves.
+	offset *= 1.0 - far_filter;
+	eb = mix(eb, 0.5, far_filter);
 	float run_up = texture(swash_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
 	float jitter = (eb - 0.5) * 2.0 * swash_edge_breakup;
 	// On dry sand the jitter may only pull the edge back, never add water
@@ -378,6 +448,62 @@ float shore_signal(vec2 world_xz, float time) {
 	// no swash it applies right up to the still-water line, or a sliver of
 	// water was left showing along it.
 	return depth - offset * (1.0 - smoothstep(0.0, 0.08, run_up)) + run_up + jitter;
+}
+
+// The sky seen along a reflected direction: a horizon-to-zenith gradient, the
+// ground color below the horizon, and a sun glow. Bounded by construction --
+// this material is alpha blended on top of an already lit scene.
+vec3 sky_reflection(vec3 dir, float far_filter) {
+	vec3 L = normalize(sun_direction);
+	float up = clamp(dir.y, 0.0, 1.0);
+	vec3 c = mix(sky_horizon_color, sky_zenith_color, pow(up, 0.55));
+	c = mix(c, sky_ground_color, smoothstep(0.0, 0.25, -dir.y));
+	float glow = pow(max(dot(dir, L), 0.0), 220.0);
+	c += sun_color * (glow * 1.5 * (1.0 - 0.8 * far_filter));
+	return c;
+}
+
+// Distance along this fragment's view ray to the opaque surface behind it.
+// The sky (or a cleared depth buffer) reads as "nothing behind": deep water,
+// so the surface stays opaque instead of turning into a window.
+float view_thickness(vec2 screen_uv, mat4 inv_projection, float fragment_distance) {
+	float raw_depth = texture(depth_texture, screen_uv).r;
+	// A cleared depth buffer is the far plane: 0 with reverse-Z, 1 without.
+	if (raw_depth < 0.00001 || raw_depth > 0.99999) {
+		return 1000.0;
+	}
+	vec4 view_pos = inv_projection * vec4(screen_uv * 2.0 - 1.0, raw_depth, 1.0);
+	if (abs(view_pos.w) < 1e-6) {
+		return 1000.0;
+	}
+	vec3 scene_view = view_pos.xyz / view_pos.w;
+	return max(length(scene_view) - fragment_distance, 0.0);
+}
+
+// 0 up close, 1 at distance_fade_end and beyond.
+float distance_filter(float p_distance) {
+	return smoothstep(distance_fade_start, distance_fade_end, p_distance);
+}
+
+// Fine detail normals from the scrolling normal map, applied in a world-space
+// tangent frame (the FFT's own slopes supply the large-scale normal).
+vec3 detail_normal_perturb(vec3 world_normal, vec2 world_xz) {
+	if (shading_quality < 1) {
+		return world_normal;
+	}
+	vec2 scroll = vec2(0.62, 0.78) * (water_time * detail_normal_speed);
+	vec2 uv = world_xz * detail_normal_scale + scroll;
+	vec3 nm = texture(detail_normal, uv).xyz * 2.0 - 1.0;
+	if (shading_quality >= 2) {
+		vec3 nm2 = texture(detail_normal, uv * 3.3 - scroll * 1.7 + vec2(0.31)).xyz * 2.0 - 1.0;
+		nm.xy = (nm.xy + nm2.xy) * 0.5;
+	}
+	// Tangent frame from world X: the surface is mostly horizontal, so this
+	// stays stable instead of spinning with the view.
+	vec3 T = normalize(vec3(1.0, 0.0, 0.0) - world_normal * world_normal.x);
+	vec3 B = normalize(cross(world_normal, T));
+	float strength = detail_normal_strength * (shading_quality >= 2 ? 1.0 : 0.6);
+	return normalize(world_normal + (T * nm.x + B * nm.y) * strength);
 }
 
 void vertex() {
@@ -400,7 +526,7 @@ void vertex() {
 		vec3 tx = px1 - px0;
 		vec3 tz = pz1 - pz0;
 		v_world_normal = normalize(cross(tz, tx));
-		v_foam = foam_at(world_pos.xz);
+		v_foam = foam_at(world_pos.xz, distance_filter(distance(CAMERA_POSITION_WORLD, world_pos)));
 	}
 }
 
@@ -416,44 +542,66 @@ void fragment() {
 	if (FRONT_FACING != camera_above) {
 		discard;
 	}
+	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec3 to_camera = normalize(CAMERA_POSITION_WORLD - wp);
+	float far_filter = distance_filter(distance(CAMERA_POSITION_WORLD, wp));
 	vec3 world_normal = v_world_normal;
 	float foam = v_foam;
 	if (per_pixel_normals) {
 		world_normal = surface_normal_pixel(v_rest_xz);
-		foam = foam_at(v_rest_xz);
+		foam = foam_at(v_rest_xz, far_filter);
 	}
-	// unshaded + a small self-contained, bounded normal-based shading term --
-	// NOT Godot's real diffuse/specular PBR response. Real root cause of the
-	// "whitewash": this material used render_mode diffuse_burley,
-	// specular_schlick_ggx, so it got its own full sun+ambient PBR light
-	// response computed as if fully opaque, and THAT result was then alpha-
-	// blended on top of the floor's OWN independently-lit PBR response.
-	// Alpha blending two independently, fully-lit PBR surfaces in linear HDR
-	// sums MORE light than either surface alone before the single tonemap
-	// pass sees it -- exceeding any reasonable reference white, regardless
-	// of how dark either material's own albedo is on its own (confirmed:
-	// the bare floor alone renders correctly; only the blended combination
-	// blows out). Going unshaded removes the water from that PBR light
-	// budget entirely -- only the floor is now really lit by the scene, and
-	// the water contributes a fixed, self-bounded tint on top of it.
-	vec3 n = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
-	// Fixed, hardcoded pseudo-light direction -- not a real scene light, just
-	// a bounded shaping term so wave normals still visibly modulate the
-	// water's own tint (the whole reason per-vertex normals were added this
-	// session in the first place), capped to a small multiplier so it can
-	// never itself become a source of overexposure.
+	// Shading frame, facing the camera (from below the geometric normal
+	// points away): every term below assumes the lit side.
+	vec3 shade_normal = dot(world_normal, to_camera) < 0.0 ? -world_normal : world_normal;
+	shade_normal = detail_normal_perturb(shade_normal, v_rest_xz);
+	// Sub-pixel waves average out at distance; flatten instead of aliasing.
+	shade_normal = normalize(mix(shade_normal, vec3(0.0, 1.0, 0.0), far_filter * 0.6));
+	vec3 sun = normalize(sun_direction);
+
+	if (!camera_above) {
+		// Seen from below: Snell's window where the view is steep enough to
+		// escape the water, total internal reflection beyond the critical
+		// angle (water to air, 48.6 degrees). Approximated from the sky
+		// gradient -- the surface under water shows the sky through the
+		// window and the water body's own darkness outside it.
+		float cos_i = clamp(dot(-to_camera, world_normal), 0.0, 1.0);
+		float critical_cos = 0.6614;
+		float window = smoothstep(critical_cos, critical_cos + 0.07, cos_i);
+		vec3 reflected = sky_reflection(reflect(-to_camera, shade_normal), far_filter);
+		vec3 body = deep_color.rgb * (1.0 - 0.35 * window);
+		ALBEDO = mix(body, reflected, window);
+		ALPHA = 1.0;
+	} else {
+
+	// unshaded + small self-contained, bounded shading terms -- NOT Godot's
+	// real diffuse/specular PBR response. Real root cause of the "whitewash":
+	// this material used render_mode diffuse_burley, specular_schlick_ggx, so
+	// it got its own full sun+ambient PBR light response computed as if fully
+	// opaque, and THAT result was then alpha-blended on top of the floor's OWN
+	// independently-lit PBR response. Alpha blending two independently, fully
+	// lit PBR surfaces in linear HDR sums MORE light than either surface alone
+	// before the single tonemap pass sees it. Going unshaded removes the water
+	// from that PBR light budget: everything below is a bounded tint on top of
+	// the scene, never a second light response.
+	vec3 n = normalize((VIEW_MATRIX * vec4(shade_normal, 0.0)).xyz);
+	vec3 view_dir = normalize(-VERTEX);
+	vec3 sun_view = normalize((VIEW_MATRIX * vec4(sun, 0.0)).xyz);
+	vec3 half_dir = normalize(sun_view + view_dir);
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
-	float shore = shore_signal(v_rest_xz, water_time);
+	float sun_up = clamp(dot(shade_normal, sun), 0.0, 1.0);
+	float shore = shore_signal(v_rest_xz, water_time, far_filter);
 	// Shore foam belongs to the moving edge: full at it, thinning over the
 	// next ~0.6 m of depth, so the white sheet scallops with the edge instead
 	// of filling the band. (Whitecaps are left alone.)
-	foam = max(foam, shore_foam_at(v_rest_xz) * (1.0 - smoothstep(0.02, 0.6, shore)));
+	foam = max(foam, shore_foam_at(v_rest_xz, far_filter) * (1.0 - smoothstep(0.02, 0.6, shore)));
 	// Bright rim right behind the moving edge, broken into lace.
 	// Over dry sand the swash film is only as thick as the run-up's excess
 	// over the sand -- a few cm -- so it fades in over a fifth of the
 	// softness there, or the uprush would barely show.
 	vec2 cuv_here = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float soft = max(shore_edge_softness, 1e-3) * mix(0.2, 1.0, smoothstep(-0.05, 0.1, depth_r(v_rest_xz, cuv_here)));
+	soft *= mix(1.0, 2.5, far_filter); // a distant waterline covers several pixels
 	float rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
 	rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale));
 	foam = max(foam, rim);
@@ -464,8 +612,64 @@ void fragment() {
 	// Thin water is clear: the swash film and the last few cm at the edge let
 	// the sand show through, turning opaque by ~25 cm of depth.
 	base_a *= mix(0.4, 1.0, smoothstep(0.0, 0.25, shore));
+
+	// How much water sits along this fragment's view ray: thick water keeps
+	// the deep color and turns opaque, thin water stays clear.
+	float thickness = view_thickness(SCREEN_UV, INV_PROJECTION_MATRIX, length(VERTEX));
+	float absorb = 1.0 - exp(-absorption * thickness);
+	base_rgb = mix(base_rgb, deep_color.rgb, absorb * 0.55);
+	base_a = clamp(base_a + absorb * 0.30, 0.0, 1.0);
+
+	// Sky reflection at grazing angles (Fresnel) and the sun's glitter.
+	vec3 reflected = sky_reflection(reflect(-to_camera, shade_normal), far_filter);
+	float fresnel = 0.02 + 0.98 * pow(1.0 - clamp(dot(shade_normal, to_camera), 0.0, 1.0), 5.0);
+	float reflection_amt = fresnel * reflection_strength;
+	vec3 specular = vec3(0.0);
+	if (shading_quality >= 1) {
+		// A distant glint is smaller than a pixel: widen the lobe and dim it,
+		// which is what a properly filtered highlight looks like.
+		float shininess = mix(specular_shininess, 90.0, far_filter);
+		float glint_fade = 1.0 - 0.7 * far_filter;
+		float spec = pow(clamp(dot(n, half_dir), 0.0, 1.0), shininess);
+		spec = clamp(spec * specular_strength * (0.3 + 0.7 * sun_up) * min(sun_energy, 2.0) * 2.0 * glint_fade, 0.0, 2.0);
+		specular = sun_color * spec;
+	}
+	base_rgb = mix(base_rgb, reflected, reflection_amt) + specular;
+	base_a = clamp(base_a + reflection_amt * 0.6, 0.0, 1.0);
+	if (shading_quality >= 2) {
+		// Sun through a backlit crest: a dark green glow, bounded to a tint.
+		float crest = texture(ocean_height_tex, v_rest_xz / ocean_domain_size + 0.5).r;
+		float crest_up = clamp(crest / max(wave_amplitude, 0.05), 0.0, 1.0);
+		float back = pow(clamp(dot(-to_camera, sun) * 0.5 + 0.5, 0.0, 1.0), 2.0);
+		base_rgb += crest_sss_color * (crest_up * crest_up * back * crest_sss);
+	}
+
+#ifdef WATER_SCREEN_SPACE
+	// Refraction: where the water is fully covered (not the fading shore
+	// film), sample the opaque scene with a distortion offset and composite
+	// at alpha 1, so the background is replaced rather than counted twice.
+	float covered = smoothstep(0.0, max(soft_edge_distance, 1e-3), thickness);
+	float shore_cover = smoothstep(0.25, 0.75, depth_r(v_rest_xz, cuv_fade));
+	float refr = covered * shore_cover * refraction_mix;
+	if (refr > 0.0) {
+		vec2 offset = shade_normal.xz * refraction_strength * (0.35 + 0.65 * absorb);
+		vec2 ruv = clamp(SCREEN_UV + offset, vec2(0.001), vec2(0.999));
+		vec3 behind = texture(screen_texture, ruv).rgb;
+		vec3 tint = exp(-thickness * vec3(absorption * 1.6, absorption, absorption * 0.7));
+		vec3 refracted = behind * tint + deep_color.rgb * (1.0 - exp(-absorption * thickness));
+		base_rgb = mix(base_rgb, refracted, refr);
+		base_a = mix(base_a, 1.0, refr);
+	}
+#endif
+
 	ALBEDO = mix(base_rgb, foam_color.rgb, foam);
 	float water_a = mix(base_a, foam_color.a, foam) * smoothstep(0.0, soft, shore);
+	// Soft contact with opaque geometry: fade out where the water plane
+	// grazes it. Skipped over the shallow shore, which already has its own
+	// soft edge and swash film (a depth-based fade would erase the film).
+	float depth_soft = smoothstep(0.0, max(soft_edge_distance, 1e-3), thickness);
+	float soft_mask = smoothstep(0.25, 0.75, depth_r(v_rest_xz, cuv_fade));
+	water_a *= mix(1.0, depth_soft, soft_mask);
 	// Wet sand under and behind the swash: blended in where the water is
 	// thin or gone, so it shows through the film and lingers after it.
 	// Noise eats into the wet edge, so it dries back ragged rather than
@@ -481,6 +685,7 @@ void fragment() {
 	float wet_a = wet * wet * (3.0 - 2.0 * wet) * wet_sand_color.a * (1.0 - water_a);
 	ALPHA = water_a + wet_a;
 	ALBEDO = (ALBEDO * water_a + wet_sand_color.rgb * wet_a) / max(ALPHA, 1e-4);
+	}
 }
 )";
 
@@ -626,6 +831,16 @@ void WaterBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_render_extent"), &WaterBody3D::get_render_extent);
 	ClassDB::bind_method(D_METHOD("set_water_material", "material"), &WaterBody3D::set_water_material);
 	ClassDB::bind_method(D_METHOD("get_water_material"), &WaterBody3D::get_water_material);
+	ClassDB::bind_method(D_METHOD("set_quality", "quality"), &WaterBody3D::set_quality);
+	ClassDB::bind_method(D_METHOD("get_quality"), &WaterBody3D::get_quality);
+	ClassDB::bind_method(D_METHOD("set_sun_path", "path"), &WaterBody3D::set_sun_path);
+	ClassDB::bind_method(D_METHOD("get_sun_path"), &WaterBody3D::get_sun_path);
+	ClassDB::bind_method(D_METHOD("set_screen_space", "enabled"), &WaterBody3D::set_screen_space);
+	ClassDB::bind_method(D_METHOD("get_screen_space"), &WaterBody3D::get_screen_space);
+	ClassDB::bind_method(D_METHOD("set_auto_recenter", "enabled"), &WaterBody3D::set_auto_recenter);
+	ClassDB::bind_method(D_METHOD("get_auto_recenter"), &WaterBody3D::get_auto_recenter);
+	ClassDB::bind_method(D_METHOD("set_underwater_effect", "enabled"), &WaterBody3D::set_underwater_effect);
+	ClassDB::bind_method(D_METHOD("get_underwater_effect"), &WaterBody3D::get_underwater_effect);
 
 	ClassDB::bind_method(D_METHOD("set_caustics_enabled", "enabled"), &WaterBody3D::set_caustics_enabled);
 	ClassDB::bind_method(D_METHOD("get_caustics_enabled"), &WaterBody3D::get_caustics_enabled);
@@ -649,6 +864,10 @@ void WaterBody3D::_bind_methods() {
 
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_VERTEX);
+	BIND_ENUM_CONSTANT(QUALITY_LOW);
+	BIND_ENUM_CONSTANT(QUALITY_MEDIUM);
+	BIND_ENUM_CONSTANT(QUALITY_HIGH);
+	BIND_ENUM_CONSTANT(QUALITY_CUSTOM);
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "surface_mesh", PROPERTY_HINT_RESOURCE_TYPE, "Mesh"), "set_surface_mesh", "get_surface_mesh");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "domain_size"), "set_domain_size", "get_domain_size");
@@ -685,6 +904,13 @@ void WaterBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "render_extent", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_render_extent", "get_render_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "normal_mode", PROPERTY_HINT_ENUM, "Per Pixel,Per Vertex"), "set_normal_mode", "get_normal_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "water_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_water_material", "get_water_material");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "quality", PROPERTY_HINT_ENUM, "Low,Medium,High,Custom"), "set_quality", "get_quality");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "screen_space"), "set_screen_space", "get_screen_space");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_recenter"), "set_auto_recenter", "get_auto_recenter");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "underwater_effect"), "set_underwater_effect", "get_underwater_effect");
+
+	ADD_GROUP("Sun", "");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_path", "get_sun_path");
 
 	ADD_GROUP("Caustics", "caustic");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "caustics_enabled"), "set_caustics_enabled", "get_caustics_enabled");
@@ -751,6 +977,9 @@ void WaterBody3D::set_wind_direction(Vector2 p_dir) {
 
 void WaterBody3D::set_wave_amplitude(float p_amp) {
 	wave_amplitude = MAX(p_amp, 0.0f);
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("wave_amplitude", wave_amplitude);
+	}
 	_reinit_spectrum();
 }
 
@@ -770,8 +999,7 @@ void WaterBody3D::recenter(Vector3 p_world_position) {
 	Vector3 p = get_global_position();
 	p.x = p_world_position.x;
 	p.z = p_world_position.z;
-	if (!solver.is_available() || Engine::get_singleton()->is_editor_hint() || surface_mesh.is_valid() || seabed_from_floor
-			|| !cell_depth.is_empty()) {
+	if (!solver.is_available() || Engine::get_singleton()->is_editor_hint() || surface_mesh.is_valid() || seabed_from_floor || !cell_depth.is_empty()) {
 		set_global_position(p);
 		_rebuild();
 		return;
@@ -782,7 +1010,7 @@ void WaterBody3D::recenter(Vector3 p_world_position) {
 		water_material->set_shader_parameter("grid_center", grid_center);
 	}
 	solver.recenter(grid_center);
-	cached_ripple_height.clear();          // (the old square's heights are not this one's)
+	cached_ripple_height.clear(); // (the old square's heights are not this one's)
 	frames_since_refresh = REFRESH_EVERY_FRAMES;
 }
 
@@ -899,8 +1127,231 @@ void WaterBody3D::set_surface_mesh(const Ref<Mesh> &p_mesh) {
 
 void WaterBody3D::set_water_material(const Ref<ShaderMaterial> &p_material) {
 	water_material = p_material;
+	own_material = p_material.is_null();
 	if (mesh_instance != nullptr && water_material.is_valid()) {
 		mesh_instance->set_material_override(water_material);
+	}
+}
+
+void WaterBody3D::set_quality(Quality p_quality) {
+	if (quality == p_quality) {
+		return;
+	}
+	quality = p_quality;
+	_apply_quality();
+}
+
+void WaterBody3D::_apply_quality() {
+	if (quality == QUALITY_CUSTOM) {
+		return;
+	}
+	const int n = quality == QUALITY_LOW ? 64 : (quality == QUALITY_MEDIUM ? 96 : 128);
+	set_ocean_grid_resolution(n);
+	set_grid_resolution(n);
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("shading_quality", (int)quality);
+	}
+}
+
+void WaterBody3D::set_sun_path(const NodePath &p_path) {
+	sun_path = p_path;
+	sun_light = nullptr;
+	sun_retry = 0;
+	_resolve_sun();
+	_update_sun();
+}
+
+void WaterBody3D::_resolve_sun() {
+	if (sun_light != nullptr) {
+		return;
+	}
+	// sun_path may be set from a scene file before the node enters the tree;
+	// get_tree() asserts there. _update() retries.
+	if (!is_inside_tree()) {
+		return;
+	}
+	if (!sun_path.is_empty()) {
+		sun_light = Object::cast_to<DirectionalLight3D>(get_node_or_null(sun_path));
+		if (sun_light == nullptr && !warned_no_sun) {
+			warned_no_sun = true;
+			WARN_PRINT("WaterBody3D: sun_path does not point at a DirectionalLight3D; the sun glitter stays at its default.");
+		}
+		return;
+	}
+	SceneTree *tree = get_tree();
+	if (tree == nullptr) {
+		return;
+	}
+	// No explicit light: use the first directional light in the scene, the
+	// common "one sun" case. Retried periodically by _update() until one
+	// exists (nodes may be added after the water), then cached.
+	TypedArray<Node> lights = tree->get_root()->find_children("*", "DirectionalLight3D", true, false);
+	if (lights.is_empty()) {
+		return;
+	}
+	sun_light = Object::cast_to<DirectionalLight3D>(lights[0]);
+}
+
+void WaterBody3D::_update_sun() {
+	if (sun_light == nullptr || water_material.is_null()) {
+		return;
+	}
+	// A DirectionalLight3D shines along its -Z, so +Z points at the sun.
+	const Vector3 toward_sun = sun_light->get_global_transform().basis.get_column(2).normalized();
+	const Color light_color = sun_light->get_color().srgb_to_linear();
+	const Vector3 color(MIN(light_color.r, 1.0f), MIN(light_color.g, 1.0f), MIN(light_color.b, 1.0f));
+	const float energy = CLAMP(sun_light->get_param(Light3D::PARAM_ENERGY), 0.0f, 4.0f);
+	water_material->set_shader_parameter("sun_direction", toward_sun);
+	water_material->set_shader_parameter("sun_color", color);
+	water_material->set_shader_parameter("sun_energy", energy);
+}
+
+void WaterBody3D::_update_sky_colors() {
+	if (water_material.is_null()) {
+		return;
+	}
+	Ref<World3D> world = get_world_3d();
+	Environment *environment = world.is_valid() ? world->get_environment().ptr() : nullptr;
+	Ref<Sky> sky = environment != nullptr ? environment->get_sky() : Ref<Sky>();
+	if (sky.is_null()) {
+		return;
+	}
+	ProceduralSkyMaterial *procedural = Object::cast_to<ProceduralSkyMaterial>(sky->get_material().ptr());
+	if (procedural == nullptr) {
+		return;
+	}
+	// Keep the reflected sky in step with the scene's own procedural sky. A
+	// panorama/HDRI sky leaves the material's defaults alone.
+	const Color zenith = procedural->get_sky_top_color().srgb_to_linear();
+	const Color horizon = procedural->get_sky_horizon_color().srgb_to_linear();
+	const Color ground = procedural->get_ground_horizon_color().srgb_to_linear();
+	water_material->set_shader_parameter("sky_zenith_color", Vector3(zenith.r, zenith.g, zenith.b));
+	water_material->set_shader_parameter("sky_horizon_color", Vector3(horizon.r, horizon.g, horizon.b));
+	water_material->set_shader_parameter("sky_ground_color", Vector3(ground.r, ground.g, ground.b));
+}
+
+static float _detail_noise_hash(int p_x, int p_y) {
+	uint32_t h = (uint32_t)p_x * 374761393u + (uint32_t)p_y * 668265263u;
+	h = (h ^ (h >> 13)) * 1274126177u;
+	h ^= h >> 16;
+	return (float)(h & 0xffffu) / 65535.0f;
+}
+
+// Tileable value noise: the lattice wraps at p_period cells.
+static float _detail_noise(float p_x, float p_y, int p_period) {
+	const int x0 = (int)Math::floor(p_x);
+	const int y0 = (int)Math::floor(p_y);
+	const float fx = p_x - (float)x0;
+	const float fy = p_y - (float)y0;
+	const int xa = ((x0 % p_period) + p_period) % p_period;
+	const int ya = ((y0 % p_period) + p_period) % p_period;
+	const int xb = (xa + 1) % p_period;
+	const int yb = (ya + 1) % p_period;
+	const float sx = fx * fx * (3.0f - 2.0f * fx);
+	const float sy = fy * fy * (3.0f - 2.0f * fy);
+	const float a = _detail_noise_hash(xa, ya);
+	const float b = _detail_noise_hash(xb, ya);
+	const float c = _detail_noise_hash(xa, yb);
+	const float d = _detail_noise_hash(xb, yb);
+	return Math::lerp(Math::lerp(a, b, sx), Math::lerp(c, d, sx), sy);
+}
+
+static float _detail_height(float p_u, float p_v) {
+	return 0.55f * _detail_noise(p_u * 4.0f, p_v * 4.0f, 4) +
+			0.30f * _detail_noise(p_u * 8.0f, p_v * 8.0f, 8) +
+			0.15f * _detail_noise(p_u * 16.0f, p_v * 16.0f, 16);
+}
+
+// The built-in material's tiling detail normal, generated once (no asset
+// dependency, deterministic for a given build): three octaves of tileable
+// value noise turned into a tangent-space normal.
+void WaterBody3D::_build_detail_normal() {
+	if (detail_normal_tex.is_valid()) {
+		return;
+	}
+	const int size = 128;
+	const real_t step = 1.0f / (real_t)size;
+	// Mipmaps matter: the map is sampled at grazing angles far away, where an
+	// unfiltered level 0 aliases into moving speckle.
+	Ref<Image> image = Image::create_empty(size, size, true, Image::FORMAT_RGB8);
+	for (int y = 0; y < size; y++) {
+		for (int x = 0; x < size; x++) {
+			const real_t u = (real_t)x / (real_t)size;
+			const real_t v = (real_t)y / (real_t)size;
+			const real_t hl = _detail_height(u - step, v);
+			const real_t hr = _detail_height(u + step, v);
+			const real_t hd = _detail_height(u, v - step);
+			const real_t hu = _detail_height(u, v + step);
+			Vector3 n(-(hr - hl) * 0.5f / step * 0.06f, -(hu - hd) * 0.5f / step * 0.06f, 1.0f);
+			n.normalize();
+			image->set_pixel(x, y, Color(n.x * 0.5f + 0.5f, n.y * 0.5f + 0.5f, n.z * 0.5f + 0.5f));
+		}
+	}
+	image->generate_mipmaps();
+	detail_normal_tex = ImageTexture::create_from_image(image);
+}
+
+void WaterBody3D::_apply_shading_settings() {
+	if (water_material.is_null()) {
+		return;
+	}
+	_build_detail_normal();
+	water_material->set_shader_parameter("detail_normal", detail_normal_tex);
+	if (quality != QUALITY_CUSTOM) {
+		water_material->set_shader_parameter("shading_quality", (int)quality);
+	}
+	_update_sky_colors();
+	_resolve_sun();
+	_update_sun();
+}
+
+void WaterBody3D::set_auto_recenter(bool p_enabled) {
+	auto_recenter = p_enabled;
+}
+
+void WaterBody3D::set_underwater_effect(bool p_enabled) {
+	if (underwater_effect == p_enabled) {
+		return;
+	}
+	underwater_effect = p_enabled;
+	_update_underwater_node();
+}
+
+void WaterBody3D::_update_underwater_node() {
+	// Editor previews don't simulate; an underwater grade there would fight
+	// the editor camera.
+	if (Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	if (!underwater_effect) {
+		if (underwater_effect_node != nullptr) {
+			remove_child(underwater_effect_node);
+			memdelete(underwater_effect_node);
+			underwater_effect_node = nullptr;
+		}
+		return;
+	}
+	if (underwater_effect_node != nullptr || !is_inside_tree()) {
+		return;
+	}
+	underwater_effect_node = memnew(WaterUnderwaterEffect);
+	underwater_effect_node->set_quiet(true);
+	underwater_effect_node->set_water_body_path(NodePath(".."));
+	add_child(underwater_effect_node, false, INTERNAL_MODE_BACK);
+}
+
+void WaterBody3D::set_screen_space(bool p_enabled) {
+	if (screen_space == p_enabled) {
+		return;
+	}
+	screen_space = p_enabled;
+	if (own_material) {
+		// The screen-space path is compiled out by default (it needs a screen
+		// copy every frame): rebuilding the material also resets its
+		// parameters, which _rebuild()/_bind_textures() restore.
+		water_material = Ref<ShaderMaterial>();
+		textures_bound = false;
+		_rebuild();
 	}
 }
 
@@ -927,7 +1378,10 @@ Ref<Texture2D> WaterBody3D::get_caustics_texture() const {
 void WaterBody3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
+			sun_light = nullptr;
+			sun_retry = 0;
 			_rebuild();
+			_update_underwater_node();
 			set_physics_process_internal(true);
 			set_process_internal(true);
 		} break;
@@ -961,13 +1415,26 @@ void WaterBody3D::_rebuild() {
 	if (water_material.is_null()) {
 		Ref<Shader> shader;
 		shader.instantiate();
-		shader->set_code(WATER_SHADER_SRC);
+		String code = WATER_SHADER_SRC;
+		if (screen_space) {
+			// After shader_type, before the rest: turns on the screen-color
+			// path (refraction). Off by default, so a plain water material
+			// never requests a screen copy.
+			const String type_line = "shader_type spatial;";
+			const int at = code.find(type_line);
+			if (at >= 0) {
+				code = code.insert(at + type_line.length(), "\n#define WATER_SCREEN_SPACE");
+			}
+		}
+		shader->set_code(code);
 		Ref<ShaderMaterial> m;
 		m.instantiate();
 		m->set_shader(shader);
 		water_material = m;
+		own_material = true;
 	}
 	mesh_instance->set_material_override(water_material);
+	_apply_shading_settings();
 
 	// Shape: a surface_mesh footprint fits the ripple grid to its bounds and
 	// masks everything outside it dry; without one, the plain square domain.
@@ -1020,6 +1487,7 @@ void WaterBody3D::_rebuild() {
 	water_material->set_shader_parameter("grid_center", grid_center);
 	water_material->set_shader_parameter("open_sea_beyond", open_sea_beyond);
 	water_material->set_shader_parameter("water_level", water_level);
+	water_material->set_shader_parameter("wave_amplitude", wave_amplitude);
 	water_material->set_shader_parameter("choppiness", choppiness);
 	water_material->set_shader_parameter("per_pixel_normals", normal_mode == NORMAL_MODE_PER_PIXEL);
 
@@ -1179,6 +1647,14 @@ void WaterBody3D::_update_mesh_offset() {
 		return;
 	}
 	const Vector3 cp = cam->get_global_position();
+	// Endless sea out of the box: carry the interactive ripple square (and the
+	// node) along with the camera. The FFT ocean is world-anchored, so only
+	// local ripples are cleared; no rebuild on this path.
+	if (auto_recenter && solver.is_available() && !seabed_from_floor && cell_depth.is_empty()) {
+		if (Vector2(cp.x, cp.z).distance_squared_to(grid_center) > 100.0f) {
+			recenter(cp);
+		}
+	}
 	const Vector2 rel = Vector2(cp.x, cp.z) - grid_center;
 	const Vector2 offset = rel;
 	if (offset == mesh_offset) {
@@ -1201,6 +1677,12 @@ void WaterBody3D::_update(double p_delta) {
 	if (water_material.is_valid()) {
 		// Wrapped so float precision holds up in long sessions.
 		water_material->set_shader_parameter("water_time", (float)Math::fmod(water_time, 3600.0));
+		if (sun_light != nullptr) {
+			_update_sun();
+		} else if (++sun_retry >= 60) {
+			sun_retry = 0;
+			_resolve_sun();
+		}
 	}
 	if (seabed_pending) {
 		seabed_pending = false;

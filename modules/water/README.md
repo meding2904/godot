@@ -1,5 +1,13 @@
 # Water — ocean, lakes and rivers
 
+New to the module? [`docs/usage.md`](docs/usage.md) is the step-by-step guide: minimal
+setup, open sea, lakes, beaches, boats, tuning and troubleshooting.
+
+A bare `WaterBody3D` is a usable open sea: 1 km render extent, 128² solver
+grids, the ripple patch follows the camera (`auto_recenter`) and underwater
+grading is automatic (`underwater_effect`). Pools and lakes set
+`render_extent = 0` or a `surface_mesh`; the rest of the setup is optional.
+
 A GPU water system: a Tessendorf FFT ocean with a wind-driven JONSWAP spectrum
 and a local shallow-water ripple layer that bodies disturb, rendered as one
 displaced surface. `WaterBody3D` is the body; buoyancy, boats, wakes and spray
@@ -18,6 +26,7 @@ and `sample_height()` returns the still-water level — a no-op, not an error.
 | `WaterBoat3D` | Propeller thrust, steering and hull drag for a `RigidBody3D` |
 | `WaterWake3D` | A moving GPU wake grid and foam, drawn by the water and sampled by buoyancy |
 | `WaterSpray3D` | Drives authored `GPUParticles3D` bow/stern/slam emitters |
+| `WaterUnderwaterEffect` | Underwater fog/grade, driven by the camera's submersion |
 | `WaterRippleProbe` | Test/automation probe for the shared `RenderingDevice` |
 
 ## The water body — `WaterBody3D`
@@ -163,6 +172,66 @@ so they work with whichever physics engine is selected, Jolt included.
   should land and skid. Save the emitters with `emitting` off — the node
   starts them — or the editor redraws every frame for them.
 
+## Shading
+
+The built-in material is unshaded and alpha blended on purpose: Godot's
+transparent pass has no scene lights, and blending two independently lit PBR
+surfaces exceeds reference white before the single tonemap pass. So the water
+contributes its own bounded terms instead:
+
+- Fresnel sky reflection from a zenith/horizon/ground gradient, kept in step
+  with the scene's `ProceduralSkyMaterial`, plus a sun glow in the reflection.
+- Sun glitter from the first `DirectionalLight3D` (or `sun_path`), Blinn
+  specular modulated by the wave normals.
+- Crest subsurface glow, strongest when the sun is behind a backlit crest.
+- A tiling detail normal generated at startup (overridable) and scrolled over
+  the surface, layered on the FFT's exact per-pixel normals.
+- Depth-buffer absorption: water thick along the view ray keeps the deep
+  color and turns opaque, thin water stays clear, and the surface fades out
+  where it grazes opaque geometry.
+
+`quality` (Low/Medium/High) sets 64/96/128 solver grids and the shading tier
+(detail layers, crest glow); `Custom` leaves every property as authored.
+
+`screen_space` adds true refraction: the material is rebuilt with a
+`#define WATER_SCREEN_SPACE` variant that samples the color buffer and
+composites at alpha 1. It is **off by default** because an earlier attempt at
+hand-composited screen-space water on this engine build read overbright; the
+`scenes/screen_probe.tscn` demo scene is a 1:1 copy test that says whether
+the capture is usable before you rely on it.
+
+Seen from below the surface, the material shows Snell's window (the sky
+through the surface, inside the 48.6 degree cone) and total internal
+reflection outside it, plus the underwater grade from
+`WaterUnderwaterEffect`.
+
+Not implemented yet: screen-space reflections (built-in SSR is opaque-only, a
+transparent water surface cannot receive it; the in-shader trace needs a real
+GPU to iterate on), planar reflections, volumetric god rays, and a half-res
+refraction path. Sky reflection + sun glitter cover the calm-water case
+meanwhile.
+
+## Aliasing
+
+Distant water aliases from four different sources, so the material band-limits
+each one by camera distance (`distance_fade_start` / `distance_fade_end` on
+the material):
+
+- Procedural foam/shore noise has no mip chain: its lace melts to its average
+  value, and the waterline jitter is dropped, so the edge stops crawling.
+- The tiling detail normal now has a mip chain and anisotropic sampling
+  (`filter_linear_mipmap_anisotropic`).
+- Sub-pixel waves average out: the per-pixel normal is blended toward up, and
+  the sun glint widens (shininess toward 90) and dims.
+- Foam sprite density fades with distance, as whitecaps do through the air.
+
+Engine-side options, cheapest first: `msaa_3d` (polygon edges, e.g. the
+horizon silhouette), `screen_space_aa` FXAA/SMAA (post-process; does smooth the
+blended water), `use_taa` (temporal — the water writes no motion vectors, so
+check it for ghosting on the water before shipping), and
+`rendering/scaling_3d/scale > 1` supersampling (best quality, most expensive).
+The demo's `project.godot` lists them as commented settings.
+
 ## Demo
 
 `demo/` is a self-contained Godot project with one scene per case:
@@ -172,7 +241,9 @@ so they work with whichever physics engine is selected, Jolt included.
 | `scenes/open_sea.tscn` | open ocean out to the horizon, with a floating crate |
 | `scenes/shore.tscn` | a sloped beach: shoaling waves, swash, shore foam, wet sand |
 | `scenes/boat.tscn` | a `RigidBody3D` boat with buoyancy and a wake; arrows drive (Esc quits) |
-| `scenes/underwater.tscn` | the surface seen from below |
+| `scenes/underwater.tscn` | the surface seen from below, with underwater grading; the HUD shows SURFACE/UNDERWATER, camera and water height |
+| `scenes/refraction.tscn` | screen-space refraction enabled, over a shallow floor |
+| `scenes/screen_probe.tscn` | 1:1 screen-copy probe: the quad must be invisible |
 
 The module is enabled in every standard build — no SDK or build flag is
 needed:
@@ -204,7 +275,9 @@ per line (it exits non-zero when something fails):
 | `water_buoyancy_3d.*`, `water_boat_3d.*` | buoyancy and boat forces |
 | `water_wake_3d.*`, `water_spray_3d.*` | wake and spray nodes |
 | `*.glsl` | compute and draw shaders, embedded by `SCsub` through `GLSL_HEADER` |
-| `demo/` | a Godot project with open sea, shoreline, boat and underwater scenes |
+| `water_underwater_effect.*` | the underwater environment grade |
+| `demo/` | a Godot project with open sea, shoreline, boat, underwater, refraction and probe scenes |
+| `docs/` | the usage guide (`usage.md`) |
 | `doc_classes/` | class reference |
 
 ## License

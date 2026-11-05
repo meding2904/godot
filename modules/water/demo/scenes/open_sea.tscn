@@ -62,5 +62,5 @@ shape = SubResource("Shape_floater")
 water_surface_path = NodePath("../../WaterBody3D")
 
 [node name="Camera3D" type="Camera3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7, 45)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6, 18)
 script = ExtResource("1_cam")

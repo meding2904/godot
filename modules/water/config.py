@@ -9,6 +9,7 @@ def configure(env):
 def get_doc_classes():
     return [
         "WaterBody3D",
+        "WaterUnderwaterEffect",
         "WaterBuoyancy3D",
         "WaterBoat3D",
         "WaterWake3D",

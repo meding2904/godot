@@ -33,8 +33,11 @@
 #include "water_solver.h"
 
 #include "scene/3d/node_3d.h"
+#include "scene/resources/image_texture.h"
 
+class DirectionalLight3D;
 class Mesh;
+class WaterUnderwaterEffect;
 class MeshInstance3D;
 class ShaderMaterial;
 class Texture2DRD;
@@ -81,6 +84,16 @@ public:
 		// Finite differences of the displaced mesh, per vertex: shading
 		// follows the mesh (faceted / stylized, and cheaper).
 		NORMAL_MODE_PER_VERTEX,
+	};
+
+	// Preset for mesh density, solver grid sizes and the material's shading
+	// tier (detail normals, crest SSS, screen-space effects). CUSTOM leaves
+	// every property as authored.
+	enum Quality {
+		QUALITY_LOW,
+		QUALITY_MEDIUM,
+		QUALITY_HIGH,
+		QUALITY_CUSTOM,
 	};
 
 	void set_domain_size(Vector2 p_size);
@@ -195,6 +208,38 @@ public:
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
 
+	// Preset for mesh density, solver grid sizes and the material's shading
+	// tier. CUSTOM (the default) leaves every property as authored.
+	void set_quality(Quality p_quality);
+	Quality get_quality() const { return quality; }
+
+	// Light for the sun glitter/specular and the sky's reflection tint.
+	// Empty = the first DirectionalLight3D in the scene, resolved on the
+	// first frame.
+	void set_sun_path(const NodePath &p_path);
+	NodePath get_sun_path() const { return sun_path; }
+
+	// Keep the interactive ripple square (and the node) under the camera while
+	// out on open water, so an endless sea needs no scripted recenter() call.
+	// Off for lakes with a surface_mesh, measured seabeds and anything the game
+	// moves itself; recenter() still works manually.
+	void set_auto_recenter(bool p_enabled);
+	bool get_auto_recenter() const { return auto_recenter; }
+
+	// Grade the frame while the camera is under the water: adds a hidden
+	// WaterUnderwaterEffect child. Needs a WorldEnvironment; silent without
+	// one. A manually added WaterUnderwaterEffect should come with this off.
+	void set_underwater_effect(bool p_enabled);
+	bool get_underwater_effect() const { return underwater_effect; }
+
+	// Enables the screen-space part of the built-in material (refraction
+	// into the screen color buffer). Off by default: it needs its own shader
+	// variant and a screen copy, and costs a little every frame. Only the
+	// built-in material is affected; a custom water_material opts in with
+	// `#define WATER_SCREEN_SPACE` itself.
+	void set_screen_space(bool p_enabled);
+	bool get_screen_space() const { return screen_space; }
+
 	// Light-space caustics: a direct RenderingDevice draw pass that projects
 	// refracted surface-grid samples into a texture, without a SubViewport.
 	void set_caustics_enabled(bool p_enabled);
@@ -248,20 +293,20 @@ private:
 	// re-checks it fresh every tick instead of trusting a stale snapshot.
 	bool warned_no_device = false;
 
-	Vector2 domain_size = Vector2(20, 20);
-	int grid_resolution = 96;
+	Vector2 domain_size = Vector2(40, 40);
+	int grid_resolution = 128;
 	float depth = 3.0f;
 	float water_level = 0.0f;
 	float damping = 0.08f; // see WaterSolver::Settings::damping's own note on this value
 	float ripple_amplitude = 1.0f;
 
-	int ocean_grid_resolution = 64;
-	Vector2 ocean_domain_size = Vector2(40, 40);
+	int ocean_grid_resolution = 128;
+	Vector2 ocean_domain_size = Vector2(64, 64);
 	float wind_speed = 8.0f;
 	Vector2 wind_direction = Vector2(1, 0);
 	float wave_amplitude = 1.0f;
 	float fetch = 0.0f;
-	float render_extent = 0.0f;
+	float render_extent = 1000.0f;
 	double water_time = 0.0; // shader clock (water_time), advanced only in a running game
 	float choppiness = 1.0f;
 	NormalMode normal_mode = NORMAL_MODE_PER_PIXEL;
@@ -306,6 +351,24 @@ private:
 	// seabed_from_floor the solver is configured on the first physics tick.
 	bool seabed_pending = false;
 	Ref<ShaderMaterial> water_material;
+	bool own_material = false; // true while water_material is the built-in one (safe to recreate)
+	Quality quality = QUALITY_CUSTOM;
+	NodePath sun_path;
+	DirectionalLight3D *sun_light = nullptr;
+	bool warned_no_sun = false;
+	int sun_retry = 0;
+	bool screen_space = false;
+	bool auto_recenter = true;
+	bool underwater_effect = true;
+	WaterUnderwaterEffect *underwater_effect_node = nullptr;
+	void _update_underwater_node();
+	Ref<ImageTexture> detail_normal_tex;
+	void _apply_quality();
+	void _resolve_sun();
+	void _update_sun();
+	void _update_sky_colors();
+	void _build_detail_normal();
+	void _apply_shading_settings();
 	ObjectID wakes[MAX_WAKES];
 	Vector2 mesh_offset; // see _update_mesh_offset()
 	void _update_mesh_offset();
@@ -372,3 +435,4 @@ private:
 };
 
 VARIANT_ENUM_CAST(WaterBody3D::NormalMode);
+VARIANT_ENUM_CAST(WaterBody3D::Quality);

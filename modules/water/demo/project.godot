@@ -18,3 +18,12 @@ window/size/viewport_height=720
 [rendering]
 
 renderer/rendering_method="forward_plus"
+; Anti-aliasing, cheapest first (all apply to the water, which is drawn in the
+; transparent pass; the material also band-limits foam/detail with distance):
+;   msaa_3d=2                 polygon edges only (the horizon line)
+;   screen_space_aa=1         FXAA on the final image, smooths blended water too
+;   use_taa=true              temporal; the water writes no motion vectors, so
+;                             check for ghosting on it before shipping
+;   scaling_3d/scale=1.25     supersampling, best quality, most expensive
+; anti_aliasing/quality/msaa_3d=2
+; anti_aliasing/quality/screen_space_aa=1

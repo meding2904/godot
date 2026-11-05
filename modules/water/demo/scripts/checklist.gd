@@ -8,7 +8,7 @@ extends Node3D
 ## the solver is alive, that waves move, and that the world-anchored FFT does
 ## not slide when the ripple square is re-centred.
 
-const CLASSES := ["WaterBody3D", "WaterBuoyancy3D", "WaterBoat3D", "WaterWake3D", "WaterSpray3D"]
+const CLASSES := ["WaterBody3D", "WaterBuoyancy3D", "WaterBoat3D", "WaterWake3D", "WaterSpray3D", "WaterUnderwaterEffect"]
 const SAMPLE_POINTS: Array[Vector3] = [
 	Vector3(0.0, 0.0, 0.0),
 	Vector3(12.0, 0.0, 8.0),
@@ -27,6 +27,9 @@ func _ready() -> void:
 	if _water == null:
 		_fail("no WaterBody3D sibling node")
 	else:
+		_check_shader()
+		_check_quality()
+		_check_zero_config()
 		await _check_waves()
 		await _check_recenter()
 		await _check_frame_time()
@@ -45,6 +48,62 @@ func _check_classes() -> void:
 
 func _has_compute() -> bool:
 	return RenderingServer.get_rendering_device() != null
+
+func _check_shader() -> void:
+	var material := _water.water_material
+	if material == null:
+		_fail("no water material was built")
+		return
+	# Forces the shader language parser to run on the material's code (no GPU
+	# needed): parse errors show up here instead of as an invisible surface.
+	var names := {}
+	for uniform in material.shader.get_shader_uniform_list():
+		names[uniform.name] = true
+	# depth/screen textures are auto-bound "default textures" and are not
+	# listed; the shading uniforms below prove the new code parsed.
+	if names.has("sun_direction") and names.has("detail_normal") and names.has("foam_color") and names.has("shading_quality") and names.has("absorption"):
+		_pass("water shader parsed (%d uniforms)" % names.size())
+	else:
+		var sorted := names.keys()
+		sorted.sort()
+		_fail("water shader did not parse as expected (%d uniforms): %s" % [names.size(), ", ".join(sorted)])
+		return
+	# The screen-space variant is a separate compilation (it declares the
+	# screen texture and refraction uniforms under a #define).
+	_water.screen_space = true
+	var ss_names := {}
+	var ss_material := _water.water_material
+	if ss_material != null:
+		for uniform in ss_material.shader.get_shader_uniform_list():
+			ss_names[uniform.name] = true
+	_water.screen_space = false
+	if ss_names.has("refraction_strength") and ss_names.has("screen_texture") == false:
+		# screen_texture is an auto-bound default texture and is not listed.
+		_pass("screen-space shader variant parsed (%d uniforms)" % ss_names.size())
+	else:
+		_fail("screen-space shader variant did not parse")
+
+func _check_quality() -> void:
+	var before := _water.grid_resolution
+	_water.quality = WaterBody3D.QUALITY_LOW
+	var low := _water.grid_resolution
+	_water.quality = WaterBody3D.QUALITY_HIGH
+	var high := _water.grid_resolution
+	_water.quality = WaterBody3D.QUALITY_CUSTOM
+	_water.grid_resolution = before
+	if low == 64 and high == 128:
+		_pass("quality presets set the solver grids (64/128)")
+	else:
+		_fail("quality presets did not apply (low %d, high %d)" % [low, high])
+
+func _check_zero_config() -> void:
+	var has_internal := _water.get_child_count(true) > _water.get_child_count()
+	if _water.auto_recenter and _water.underwater_effect and has_internal:
+		_pass("zero-config defaults: auto recenter + internal underwater grade")
+	else:
+		_fail("zero-config defaults missing (auto_recenter=%s, underwater_effect=%s, internal=%s)" % [
+			_water.auto_recenter, _water.underwater_effect, has_internal,
+		])
 
 func _check_waves() -> void:
 	if not _has_compute():

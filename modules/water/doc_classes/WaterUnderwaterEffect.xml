@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WaterUnderwaterEffect" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Grades the frame while the camera is under a [WaterBody3D]: underwater fog, color and exposure, eased across the surface.
+	</brief_description>
+	<description>
+		Watches a camera against a [WaterBody3D] and, while it is below the water surface, swaps the scene's [WorldEnvironment] for a graded copy: the fog turns to [member water_color] at [member fog_density], and brightness, contrast and saturation ease to the underwater values. The grade interpolates in and out over [member transition_speed] instead of popping at the waterline.
+
+		Implemented with plain [Environment] properties, not a post-process pass, so it works on every renderer and composes with the surface's own below-water shading (Snell's window and total internal reflection, from the water material). It grades the whole frame, which is what being underwater looks like.
+
+		Needs a [WorldEnvironment] with an [Environment] in the scene. The environment is duplicated at runtime and the original is restored when the node leaves the tree. [signal submerged_changed] fires when the smoothed state crosses the surface: hook audio bus filters, camera effects or gameplay to it.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_submersion" qualifiers="const">
+			<return type="float" />
+			<description>
+				The smoothed underwater amount: 0 above water, 1 fully under. Use it to drive continuous effects; [method is_submerged] is the thresholded binary state.
+			</description>
+		</method>
+		<method name="is_submerged" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] while [method get_submersion] is above 0.5, i.e. the camera is (smoothed) under the water.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="brightness" type="float" setter="set_brightness" getter="get_brightness" default="0.85">
+			Color-adjustment brightness underwater (1 = unchanged).
+		</member>
+		<member name="camera_path" type="NodePath" setter="set_camera_path" getter="get_camera_path" default="NodePath(&quot;&quot;)">
+			[Camera3D] to watch. Empty = the active camera of the viewport.
+		</member>
+		<member name="contrast" type="float" setter="set_contrast" getter="get_contrast" default="1.05">
+			Color-adjustment contrast underwater (1 = unchanged).
+		</member>
+		<member name="fog_density" type="float" setter="set_fog_density" getter="get_fog_density" default="0.08">
+			Fog density underwater, in the environment's fog units. The scene's own fog density is blended toward this.
+		</member>
+		<member name="saturation" type="float" setter="set_saturation" getter="get_saturation" default="0.8">
+			Color-adjustment saturation underwater (1 = unchanged).
+		</member>
+		<member name="transition_speed" type="float" setter="set_transition_speed" getter="get_transition_speed" default="4.0">
+			How fast the grade follows the camera across the surface, in 1/s. 4 reaches the full grade in about a quarter second.
+		</member>
+		<member name="water_body_path" type="NodePath" setter="set_water_body_path" getter="get_water_body_path" default="NodePath(&quot;&quot;)">
+			[WaterBody3D] to test the camera against. Required.
+		</member>
+		<member name="water_color" type="Color" setter="set_water_color" getter="get_water_color" default="Color(0.03, 0.22, 0.26, 1)">
+			Fog color underwater: the water body's tint, which the scene fades toward as the camera goes under.
+		</member>
+	</members>
+	<signals>
+		<signal name="submerged_changed">
+			<param index="0" name="submerged" type="bool" />
+			<description>
+				Emitted when the camera crosses the surface (with the smoothing applied): [code]true[/code] going under, [code]false[/code] coming back up.
+			</description>
+		</signal>
+	</signals>
+	<constants>
+	</constants>
+</class>
