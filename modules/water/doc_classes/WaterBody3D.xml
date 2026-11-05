@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<class name="PhysXWaterSurface3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+<class name="WaterBody3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
 		A real animated water surface: a GPU FFT ocean spectrum layer plus a local ripple layer that bodies can disturb, rendered as a displaced mesh.
 	</brief_description>
@@ -9,7 +9,7 @@
 		No [RenderingDevice] compute support (e.g. running headless) leaves the surface flat and [method sample_height] returning [member water_level] plus zero -- a graceful no-op, not an error, matching every other GPU solver in this module.
 		Set [member surface_mesh] to give the water any outline -- a round pool, a kidney-bean pond, a lake with an island. Waves reflect off its shoreline, and [method sample_height]/[method is_wet] report no water outside it.
 		Set [member seabed_from_floor] for water over uneven ground -- a beach, a lake bed. The still-water depth of every ripple cell is then measured from the floor: waves travel at the local shallow-water speed, so they slow and bunch up over shallows, the shoreline falls wherever the ground rises above the water, and the ocean chop fades out over the last [member shallow_fade_depth] meters. Without it, the whole surface uses the constant [member depth].
-		[PhysXWaterWake3D] nodes on moving bodies draw their wakes and foam on the surface (up to four), and [method sample_height] includes them.
+		[WaterWake3D] nodes on moving bodies draw their wakes and foam on the surface (up to four), and [method sample_height] includes them.
 		Both simulation grids are centered on the node's global position (plus the [member surface_mesh] footprint's center), fixed when the node enters the tree or a property changes. The node's rotation and scale are not applied to the simulation, so keep it unrotated and unscaled.
 		Only runs in an actual running game, never in the editor -- placing or moving the node in the Inspector does not simulate.
 	</description>
@@ -83,7 +83,7 @@
 			<return type="float" />
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
-				The combined surface height (ripple + ocean layers, plus [member water_level]) at [param world_pos]'s XZ, bilinearly sampled from the last readback (refreshed every physics tick, a few frames behind the GPU simulation -- fine for buoyancy, not meant for sub-frame precision), plus any [PhysXWaterWake3D] wakes there. [code]world_pos.y[/code] is ignored.
+				The combined surface height (ripple + ocean layers, plus [member water_level]) at [param world_pos]'s XZ, bilinearly sampled from the last readback (refreshed every physics tick, a few frames behind the GPU simulation -- fine for buoyancy, not meant for sub-frame precision), plus any [WaterWake3D] wakes there. [code]world_pos.y[/code] is ignored.
 				Returns [code]-INF[/code] where [method is_wet] is [code]false[/code] (outside the [member surface_mesh] footprint, or over dry seabed), so anything comparing a point's height against it -- a buoyancy script's submersion depth -- reads "not in water" there.
 				Past the simulated square (with a [member render_extent]) it is the FFT ocean, tiled, on still water -- the same surface that is drawn there, so bodies float on the open sea too.
 			</description>
@@ -93,7 +93,7 @@
 			<param index="0" name="world_pos" type="Vector3" />
 			<param index="1" name="wake" type="Object" />
 			<description>
-				The same as [method sample_height], but leaving out one [PhysXWaterWake3D]'s contribution (pass [code]null[/code] to leave out nothing). A boat that does its own buoyancy in a script should pass its own wake: otherwise it reads the dip and bow wave its hull pushes into the water and rides its own wake, sinking at the stern and pitching. Other boats' wakes are still included, so it still rocks on theirs. [PhysXBuoyancy3D] (and so [PhysXBoat3D]) already does this for a [PhysXWaterWake3D] that is another child of the same body.
+				The same as [method sample_height], but leaving out one [WaterWake3D]'s contribution (pass [code]null[/code] to leave out nothing). A boat that does its own buoyancy in a script should pass its own wake: otherwise it reads the dip and bow wave its hull pushes into the water and rides its own wake, sinking at the stern and pitching. Other boats' wakes are still included, so it still rocks on theirs. [WaterBuoyancy3D] (and so [WaterBoat3D]) already does this for a [WaterWake3D] that is another child of the same body.
 			</description>
 		</method>
 		<method name="set_sea_state">
@@ -163,7 +163,7 @@
 		<member name="grid_resolution" type="int" setter="set_grid_resolution" getter="get_grid_resolution" default="96">
 			Cell count per side of the local ripple layer's grid. Not required to be a power of two, unlike [member ocean_grid_resolution].
 		</member>
-		<member name="normal_mode" type="int" setter="set_normal_mode" getter="get_normal_mode" enum="PhysXWaterSurface3D.NormalMode" default="0">
+		<member name="normal_mode" type="int" setter="set_normal_mode" getter="get_normal_mode" enum="WaterBody3D.NormalMode" default="0">
 			How the surface's normals and whitecap foam are computed, set on the material through its [code]per_pixel_normals[/code] uniform. [constant NORMAL_MODE_PER_PIXEL] uses the exact slopes and displacement derivatives the ocean FFT also produces ([code]ocean_deriv_tex[/code]), so crests shade smoothly and foam follows the folds at any mesh density -- the realistic choice. [constant NORMAL_MODE_PER_VERTEX] takes finite differences of the displaced mesh, so the shading follows the mesh -- softer, faceted at a coarse [member ocean_grid_resolution], for a stylized look.
 		</member>
 		<member name="ocean_domain_size" type="Vector2" setter="set_ocean_domain_size" getter="get_ocean_domain_size" default="Vector2(40, 40)">

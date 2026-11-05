@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_buoyancy_3d.h                                                   */
+/*  water_buoyancy_3d.h                                                   */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -32,18 +32,18 @@
 
 #include "scene/3d/node_3d.h"
 
-class PhysXWaterSurface3D;
+class WaterBody3D;
 class RigidBody3D;
 
-// Floats its parent RigidBody3D on a PhysXWaterSurface3D. Sample points on
+// Floats its parent RigidBody3D on a WaterBody3D. Sample points on
 // the hull each carry a share of the hull's footprint: the water pushes each
 // one up by the weight of the water it displaces (density * g * area *
 // depth, up to hull_height), so the body settles at its real draft and
 // rights itself from the spread of the points. Submerged points drag
 // against the water, and the body disturbs the ripple layer, more as it
 // moves. Only applies RigidBody3D forces -- works with any physics engine.
-class PhysXBuoyancy3D : public Node3D {
-	GDCLASS(PhysXBuoyancy3D, Node3D);
+class WaterBuoyancy3D : public Node3D {
+	GDCLASS(WaterBuoyancy3D, Node3D);
 
 	NodePath water_surface_path;
 	PackedVector3Array sample_points; // body-local; empty = generated from the collision shapes
@@ -59,7 +59,7 @@ class PhysXBuoyancy3D : public Node3D {
 
 	// Resolved at runtime.
 	ObjectID water_id;
-	ObjectID wake_id; // a sibling PhysXWaterWake3D: its own dip doesn't count
+	ObjectID wake_id; // a sibling WaterWake3D: its own dip doesn't count
 	PackedVector3Array points; // in use (explicit or generated)
 	float area = 1.0f;
 	float height = 0.5f;
@@ -76,7 +76,7 @@ protected:
 
 public:
 	RigidBody3D *get_body() const;
-	PhysXWaterSurface3D *get_water_surface() const;
+	WaterBody3D *get_water_surface() const;
 
 	void set_water_surface_path(const NodePath &p_path);
 	NodePath get_water_surface_path() const { return water_surface_path; }

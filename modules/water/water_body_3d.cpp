@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_water_surface_3d.cpp                                            */
+/*  water_body_3d.cpp                                            */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,9 +28,9 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "physx_water_surface_3d.h"
+#include "water_body_3d.h"
 
-#include "physx_water_wake_3d.h"
+#include "water_wake_3d.h"
 
 #include "core/config/engine.h"
 #include "core/math/face3.h"
@@ -82,10 +82,10 @@ render_mode blend_mix, cull_disabled, unshaded;
 uniform sampler2D ripple_height_tex : hint_default_black, filter_linear, repeat_disable;
 uniform sampler2D ocean_height_tex : hint_default_black, filter_linear, repeat_enable;
 // Ocean chop multiplier over the ripple domain: 1 in deep water, fading to 0
-// at the waterline (set by PhysXWaterSurface3D when it has a seabed).
+// at the waterline (set by WaterBody3D when it has a seabed).
 uniform sampler2D ocean_fade_tex : hint_default_white, filter_linear, repeat_disable;
 // Choppy horizontal displacement (x, z) of the ocean layer; scaled by
-// choppiness (both set by PhysXWaterSurface3D).
+// choppiness (both set by WaterBody3D).
 uniform sampler2D ocean_disp_tex : hint_default_black, filter_linear, repeat_enable;
 uniform float choppiness = 1.0;
 // Ocean slopes and displacement derivatives (dh/dx, dh/dz, dDx/dx, dDz/dz),
@@ -93,18 +93,18 @@ uniform float choppiness = 1.0;
 uniform sampler2D ocean_deriv_tex : hint_default_black, filter_linear, repeat_enable;
 // true: normals and foam per pixel from ocean_deriv_tex (smooth crests at any
 // mesh density). false: per vertex, from finite differences of the displaced
-// mesh (set by PhysXWaterSurface3D::normal_mode).
+// mesh (set by WaterBody3D::normal_mode).
 uniform bool per_pixel_normals = true;
 uniform vec2 ripple_domain_size = vec2(20.0, 20.0);
 uniform vec2 ocean_domain_size = vec2(40.0, 40.0);
-// World XZ both height fields are centered on (set by PhysXWaterSurface3D).
+// World XZ both height fields are centered on (set by WaterBody3D).
 uniform vec2 grid_center = vec2(0.0);
-// Open, deep sea past the simulated square (PhysXWaterSurface3D::open_sea_beyond) instead of the edge's seabed.
+// Open, deep sea past the simulated square (WaterBody3D::open_sea_beyond) instead of the edge's seabed.
 uniform bool open_sea_beyond = false;
 // World xz the whole open-water mesh is moved by, so its dense core stays
 // under the camera; set by the node every frame.
 uniform vec2 mesh_offset = vec2(0.0);
-// Moving wake grids (PhysXWaterWake3D), up to four: height textures and
+// Moving wake grids (WaterWake3D), up to four: height textures and
 // their rects (xy world xz of the corner, z side length -- 0 = unused, w how
 // much the wake fades out over the shore ripple grid, 0..1).
 uniform sampler2D wake_height_0 : hint_default_black, filter_linear, repeat_disable;
@@ -118,7 +118,7 @@ uniform vec4 wake_rect_3 = vec4(0.0);
 // Mean surface height (node-relative), what the ripple layer settles back to
 // past the edge of its domain when the surface is rendered further out.
 uniform float water_level = 0.0;
-// Animation clock for the shore noise, set by PhysXWaterSurface3D while the
+// Animation clock for the shore noise, set by WaterBody3D while the
 // game runs -- not the shader's built-in clock: a material that reads it makes
 // the editor redraw its 3D view every frame, and with a big scene open that
 // ate half of Play Scene's frame rate. In the editor this stays 0 (the water
@@ -127,7 +127,7 @@ uniform float water_time = 0.0;
 uniform vec4 water_color : source_color = vec4(0.09, 0.32, 0.42, 0.65);
 // Persistent whitecap foam (0..1) on the ocean grid, injected where the
 // waves fold and fading over the node's foam_persistence (set by
-// PhysXWaterSurface3D).
+// WaterBody3D).
 uniform sampler2D ocean_foam_tex : hint_default_black, filter_linear, repeat_enable;
 uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 // How much fading foam breaks up into lace instead of thinning evenly
@@ -136,7 +136,7 @@ uniform float foam_breakup : hint_range(0.0, 1.0) = 0.6;
 // Size of that lace: noise cells per meter, fixed to the water.
 uniform float foam_detail_scale = 1.5;
 // Shore foam (0..1) on the ripple grid: the foamy sheet where waves wash in
-// over the shallows (set by PhysXWaterSurface3D; needs a seabed).
+// over the shallows (set by WaterBody3D; needs a seabed).
 uniform sampler2D shore_foam_tex : hint_default_black, filter_linear, repeat_disable;
 // Shore foam is a thin sheet, not a whitecap: fainter, finer and lacier.
 uniform float shore_foam_strength : hint_range(0.0, 1.0) = 0.65;
@@ -147,7 +147,7 @@ uniform float shore_foam_breakup : hint_range(0.0, 1.0) = 0.85;
 uniform vec4 shallow_color : source_color = vec4(0.42, 0.66, 0.64, 0.55);
 uniform float shallow_tint : hint_range(0.0, 1.0) = 0.6;
 // Still-water depth in meters over the ripple domain (dry shore negative,
-// pool walls deep), set by PhysXWaterSurface3D: the waterline is measured in
+// pool walls deep), set by WaterBody3D: the waterline is measured in
 // real depth, independent of shallow_fade_depth.
 uniform sampler2D shore_depth_tex : hint_default_white, filter_linear, repeat_disable;
 // Soft contact with the shore: the surface fades out over this much water
@@ -159,7 +159,7 @@ uniform float shore_edge_softness : hint_range(0.0, 0.5, 0.005) = 0.08;
 // waves instead of following a depth contour, but only ever goes clear where
 // the water really is that thin.
 uniform float swash_reach : hint_range(0.0, 1.0, 0.01) = 0.25;
-// Swash and wet sand from PhysXWaterSurface3D (swash_run_up, ...): r = how
+// Swash and wet sand from WaterBody3D (swash_run_up, ...): r = how
 // high (m) above still water the last waves ran up, g = sand wetness.
 uniform sampler2D swash_tex : hint_default_black, filter_linear, repeat_disable;
 // Thickness (m) of the swash film over the sand -- just enough to stay above
@@ -562,90 +562,90 @@ void clip_to_triangle(LocalVector<Vector2> &r_poly, const Vector2 p_tri[3]) {
 
 } // namespace
 
-void PhysXWaterSurface3D::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("set_domain_size", "size"), &PhysXWaterSurface3D::set_domain_size);
-	ClassDB::bind_method(D_METHOD("get_domain_size"), &PhysXWaterSurface3D::get_domain_size);
-	ClassDB::bind_method(D_METHOD("set_grid_resolution", "n"), &PhysXWaterSurface3D::set_grid_resolution);
-	ClassDB::bind_method(D_METHOD("get_grid_resolution"), &PhysXWaterSurface3D::get_grid_resolution);
-	ClassDB::bind_method(D_METHOD("set_depth", "depth"), &PhysXWaterSurface3D::set_depth);
-	ClassDB::bind_method(D_METHOD("get_depth"), &PhysXWaterSurface3D::get_depth);
-	ClassDB::bind_method(D_METHOD("set_water_level", "level"), &PhysXWaterSurface3D::set_water_level);
-	ClassDB::bind_method(D_METHOD("get_water_level"), &PhysXWaterSurface3D::get_water_level);
-	ClassDB::bind_method(D_METHOD("set_damping", "damping"), &PhysXWaterSurface3D::set_damping);
-	ClassDB::bind_method(D_METHOD("get_damping"), &PhysXWaterSurface3D::get_damping);
-	ClassDB::bind_method(D_METHOD("set_ripple_amplitude", "amplitude"), &PhysXWaterSurface3D::set_ripple_amplitude);
-	ClassDB::bind_method(D_METHOD("get_ripple_amplitude"), &PhysXWaterSurface3D::get_ripple_amplitude);
+void WaterBody3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_domain_size", "size"), &WaterBody3D::set_domain_size);
+	ClassDB::bind_method(D_METHOD("get_domain_size"), &WaterBody3D::get_domain_size);
+	ClassDB::bind_method(D_METHOD("set_grid_resolution", "n"), &WaterBody3D::set_grid_resolution);
+	ClassDB::bind_method(D_METHOD("get_grid_resolution"), &WaterBody3D::get_grid_resolution);
+	ClassDB::bind_method(D_METHOD("set_depth", "depth"), &WaterBody3D::set_depth);
+	ClassDB::bind_method(D_METHOD("get_depth"), &WaterBody3D::get_depth);
+	ClassDB::bind_method(D_METHOD("set_water_level", "level"), &WaterBody3D::set_water_level);
+	ClassDB::bind_method(D_METHOD("get_water_level"), &WaterBody3D::get_water_level);
+	ClassDB::bind_method(D_METHOD("set_damping", "damping"), &WaterBody3D::set_damping);
+	ClassDB::bind_method(D_METHOD("get_damping"), &WaterBody3D::get_damping);
+	ClassDB::bind_method(D_METHOD("set_ripple_amplitude", "amplitude"), &WaterBody3D::set_ripple_amplitude);
+	ClassDB::bind_method(D_METHOD("get_ripple_amplitude"), &WaterBody3D::get_ripple_amplitude);
 
-	ClassDB::bind_method(D_METHOD("set_ocean_grid_resolution", "n"), &PhysXWaterSurface3D::set_ocean_grid_resolution);
-	ClassDB::bind_method(D_METHOD("get_ocean_grid_resolution"), &PhysXWaterSurface3D::get_ocean_grid_resolution);
-	ClassDB::bind_method(D_METHOD("set_ocean_domain_size", "size"), &PhysXWaterSurface3D::set_ocean_domain_size);
-	ClassDB::bind_method(D_METHOD("get_ocean_domain_size"), &PhysXWaterSurface3D::get_ocean_domain_size);
-	ClassDB::bind_method(D_METHOD("set_wind_speed", "speed"), &PhysXWaterSurface3D::set_wind_speed);
-	ClassDB::bind_method(D_METHOD("get_wind_speed"), &PhysXWaterSurface3D::get_wind_speed);
-	ClassDB::bind_method(D_METHOD("set_wind_direction", "dir"), &PhysXWaterSurface3D::set_wind_direction);
-	ClassDB::bind_method(D_METHOD("get_wind_direction"), &PhysXWaterSurface3D::get_wind_direction);
-	ClassDB::bind_method(D_METHOD("set_wave_amplitude", "amplitude"), &PhysXWaterSurface3D::set_wave_amplitude);
-	ClassDB::bind_method(D_METHOD("get_wave_amplitude"), &PhysXWaterSurface3D::get_wave_amplitude);
-	ClassDB::bind_method(D_METHOD("set_fetch", "fetch"), &PhysXWaterSurface3D::set_fetch);
-	ClassDB::bind_method(D_METHOD("get_fetch"), &PhysXWaterSurface3D::get_fetch);
-	ClassDB::bind_method(D_METHOD("get_effective_fetch"), &PhysXWaterSurface3D::get_effective_fetch);
-	ClassDB::bind_method(D_METHOD("set_choppiness", "choppiness"), &PhysXWaterSurface3D::set_choppiness);
-	ClassDB::bind_method(D_METHOD("get_choppiness"), &PhysXWaterSurface3D::get_choppiness);
-	ClassDB::bind_method(D_METHOD("set_normal_mode", "mode"), &PhysXWaterSurface3D::set_normal_mode);
-	ClassDB::bind_method(D_METHOD("get_normal_mode"), &PhysXWaterSurface3D::get_normal_mode);
-	ClassDB::bind_method(D_METHOD("set_foam_enabled", "enabled"), &PhysXWaterSurface3D::set_foam_enabled);
-	ClassDB::bind_method(D_METHOD("get_foam_enabled"), &PhysXWaterSurface3D::get_foam_enabled);
-	ClassDB::bind_method(D_METHOD("set_foam_threshold", "threshold"), &PhysXWaterSurface3D::set_foam_threshold);
-	ClassDB::bind_method(D_METHOD("get_foam_threshold"), &PhysXWaterSurface3D::get_foam_threshold);
-	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXWaterSurface3D::set_foam_persistence);
-	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXWaterSurface3D::get_foam_persistence);
-	ClassDB::bind_method(D_METHOD("set_shore_foam_band", "depth"), &PhysXWaterSurface3D::set_shore_foam_band);
-	ClassDB::bind_method(D_METHOD("get_shore_foam_band"), &PhysXWaterSurface3D::get_shore_foam_band);
-	ClassDB::bind_method(D_METHOD("set_open_sea_beyond", "open"), &PhysXWaterSurface3D::set_open_sea_beyond);
-	ClassDB::bind_method(D_METHOD("set_sea_state", "wind_speed", "wind_direction", "wave_amplitude", "fetch"), &PhysXWaterSurface3D::set_sea_state);
-	ClassDB::bind_method(D_METHOD("recenter", "world_position"), &PhysXWaterSurface3D::recenter);
-	ClassDB::bind_method(D_METHOD("get_open_sea_beyond"), &PhysXWaterSurface3D::get_open_sea_beyond);
-	ClassDB::bind_method(D_METHOD("set_shore_undertow", "speed"), &PhysXWaterSurface3D::set_shore_undertow);
-	ClassDB::bind_method(D_METHOD("get_shore_undertow"), &PhysXWaterSurface3D::get_shore_undertow);
-	ClassDB::bind_method(D_METHOD("set_swash_run_up", "height"), &PhysXWaterSurface3D::set_swash_run_up);
-	ClassDB::bind_method(D_METHOD("get_swash_run_up"), &PhysXWaterSurface3D::get_swash_run_up);
-	ClassDB::bind_method(D_METHOD("set_swash_drain_speed", "speed"), &PhysXWaterSurface3D::set_swash_drain_speed);
-	ClassDB::bind_method(D_METHOD("get_swash_drain_speed"), &PhysXWaterSurface3D::get_swash_drain_speed);
-	ClassDB::bind_method(D_METHOD("set_wet_sand_dry_time", "seconds"), &PhysXWaterSurface3D::set_wet_sand_dry_time);
-	ClassDB::bind_method(D_METHOD("get_wet_sand_dry_time"), &PhysXWaterSurface3D::get_wet_sand_dry_time);
+	ClassDB::bind_method(D_METHOD("set_ocean_grid_resolution", "n"), &WaterBody3D::set_ocean_grid_resolution);
+	ClassDB::bind_method(D_METHOD("get_ocean_grid_resolution"), &WaterBody3D::get_ocean_grid_resolution);
+	ClassDB::bind_method(D_METHOD("set_ocean_domain_size", "size"), &WaterBody3D::set_ocean_domain_size);
+	ClassDB::bind_method(D_METHOD("get_ocean_domain_size"), &WaterBody3D::get_ocean_domain_size);
+	ClassDB::bind_method(D_METHOD("set_wind_speed", "speed"), &WaterBody3D::set_wind_speed);
+	ClassDB::bind_method(D_METHOD("get_wind_speed"), &WaterBody3D::get_wind_speed);
+	ClassDB::bind_method(D_METHOD("set_wind_direction", "dir"), &WaterBody3D::set_wind_direction);
+	ClassDB::bind_method(D_METHOD("get_wind_direction"), &WaterBody3D::get_wind_direction);
+	ClassDB::bind_method(D_METHOD("set_wave_amplitude", "amplitude"), &WaterBody3D::set_wave_amplitude);
+	ClassDB::bind_method(D_METHOD("get_wave_amplitude"), &WaterBody3D::get_wave_amplitude);
+	ClassDB::bind_method(D_METHOD("set_fetch", "fetch"), &WaterBody3D::set_fetch);
+	ClassDB::bind_method(D_METHOD("get_fetch"), &WaterBody3D::get_fetch);
+	ClassDB::bind_method(D_METHOD("get_effective_fetch"), &WaterBody3D::get_effective_fetch);
+	ClassDB::bind_method(D_METHOD("set_choppiness", "choppiness"), &WaterBody3D::set_choppiness);
+	ClassDB::bind_method(D_METHOD("get_choppiness"), &WaterBody3D::get_choppiness);
+	ClassDB::bind_method(D_METHOD("set_normal_mode", "mode"), &WaterBody3D::set_normal_mode);
+	ClassDB::bind_method(D_METHOD("get_normal_mode"), &WaterBody3D::get_normal_mode);
+	ClassDB::bind_method(D_METHOD("set_foam_enabled", "enabled"), &WaterBody3D::set_foam_enabled);
+	ClassDB::bind_method(D_METHOD("get_foam_enabled"), &WaterBody3D::get_foam_enabled);
+	ClassDB::bind_method(D_METHOD("set_foam_threshold", "threshold"), &WaterBody3D::set_foam_threshold);
+	ClassDB::bind_method(D_METHOD("get_foam_threshold"), &WaterBody3D::get_foam_threshold);
+	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &WaterBody3D::set_foam_persistence);
+	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &WaterBody3D::get_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_shore_foam_band", "depth"), &WaterBody3D::set_shore_foam_band);
+	ClassDB::bind_method(D_METHOD("get_shore_foam_band"), &WaterBody3D::get_shore_foam_band);
+	ClassDB::bind_method(D_METHOD("set_open_sea_beyond", "open"), &WaterBody3D::set_open_sea_beyond);
+	ClassDB::bind_method(D_METHOD("set_sea_state", "wind_speed", "wind_direction", "wave_amplitude", "fetch"), &WaterBody3D::set_sea_state);
+	ClassDB::bind_method(D_METHOD("recenter", "world_position"), &WaterBody3D::recenter);
+	ClassDB::bind_method(D_METHOD("get_open_sea_beyond"), &WaterBody3D::get_open_sea_beyond);
+	ClassDB::bind_method(D_METHOD("set_shore_undertow", "speed"), &WaterBody3D::set_shore_undertow);
+	ClassDB::bind_method(D_METHOD("get_shore_undertow"), &WaterBody3D::get_shore_undertow);
+	ClassDB::bind_method(D_METHOD("set_swash_run_up", "height"), &WaterBody3D::set_swash_run_up);
+	ClassDB::bind_method(D_METHOD("get_swash_run_up"), &WaterBody3D::get_swash_run_up);
+	ClassDB::bind_method(D_METHOD("set_swash_drain_speed", "speed"), &WaterBody3D::set_swash_drain_speed);
+	ClassDB::bind_method(D_METHOD("get_swash_drain_speed"), &WaterBody3D::get_swash_drain_speed);
+	ClassDB::bind_method(D_METHOD("set_wet_sand_dry_time", "seconds"), &WaterBody3D::set_wet_sand_dry_time);
+	ClassDB::bind_method(D_METHOD("get_wet_sand_dry_time"), &WaterBody3D::get_wet_sand_dry_time);
 
-	ClassDB::bind_method(D_METHOD("set_surface_mesh", "mesh"), &PhysXWaterSurface3D::set_surface_mesh);
-	ClassDB::bind_method(D_METHOD("get_surface_mesh"), &PhysXWaterSurface3D::get_surface_mesh);
-	ClassDB::bind_method(D_METHOD("set_seabed_from_floor", "enabled"), &PhysXWaterSurface3D::set_seabed_from_floor);
-	ClassDB::bind_method(D_METHOD("get_seabed_from_floor"), &PhysXWaterSurface3D::get_seabed_from_floor);
-	ClassDB::bind_method(D_METHOD("set_seabed_collision_mask", "mask"), &PhysXWaterSurface3D::set_seabed_collision_mask);
-	ClassDB::bind_method(D_METHOD("get_seabed_collision_mask"), &PhysXWaterSurface3D::get_seabed_collision_mask);
-	ClassDB::bind_method(D_METHOD("set_shallow_fade_depth", "depth"), &PhysXWaterSurface3D::set_shallow_fade_depth);
-	ClassDB::bind_method(D_METHOD("get_shallow_fade_depth"), &PhysXWaterSurface3D::get_shallow_fade_depth);
-	ClassDB::bind_method(D_METHOD("set_render_extent", "extent"), &PhysXWaterSurface3D::set_render_extent);
-	ClassDB::bind_method(D_METHOD("get_render_extent"), &PhysXWaterSurface3D::get_render_extent);
-	ClassDB::bind_method(D_METHOD("set_water_material", "material"), &PhysXWaterSurface3D::set_water_material);
-	ClassDB::bind_method(D_METHOD("get_water_material"), &PhysXWaterSurface3D::get_water_material);
+	ClassDB::bind_method(D_METHOD("set_surface_mesh", "mesh"), &WaterBody3D::set_surface_mesh);
+	ClassDB::bind_method(D_METHOD("get_surface_mesh"), &WaterBody3D::get_surface_mesh);
+	ClassDB::bind_method(D_METHOD("set_seabed_from_floor", "enabled"), &WaterBody3D::set_seabed_from_floor);
+	ClassDB::bind_method(D_METHOD("get_seabed_from_floor"), &WaterBody3D::get_seabed_from_floor);
+	ClassDB::bind_method(D_METHOD("set_seabed_collision_mask", "mask"), &WaterBody3D::set_seabed_collision_mask);
+	ClassDB::bind_method(D_METHOD("get_seabed_collision_mask"), &WaterBody3D::get_seabed_collision_mask);
+	ClassDB::bind_method(D_METHOD("set_shallow_fade_depth", "depth"), &WaterBody3D::set_shallow_fade_depth);
+	ClassDB::bind_method(D_METHOD("get_shallow_fade_depth"), &WaterBody3D::get_shallow_fade_depth);
+	ClassDB::bind_method(D_METHOD("set_render_extent", "extent"), &WaterBody3D::set_render_extent);
+	ClassDB::bind_method(D_METHOD("get_render_extent"), &WaterBody3D::get_render_extent);
+	ClassDB::bind_method(D_METHOD("set_water_material", "material"), &WaterBody3D::set_water_material);
+	ClassDB::bind_method(D_METHOD("get_water_material"), &WaterBody3D::get_water_material);
 
-	ClassDB::bind_method(D_METHOD("set_caustics_enabled", "enabled"), &PhysXWaterSurface3D::set_caustics_enabled);
-	ClassDB::bind_method(D_METHOD("get_caustics_enabled"), &PhysXWaterSurface3D::get_caustics_enabled);
-	ClassDB::bind_method(D_METHOD("set_caustics_sun_direction", "direction"), &PhysXWaterSurface3D::set_caustics_sun_direction);
-	ClassDB::bind_method(D_METHOD("get_caustics_sun_direction"), &PhysXWaterSurface3D::get_caustics_sun_direction);
-	ClassDB::bind_method(D_METHOD("set_caustics_reference_depth", "depth"), &PhysXWaterSurface3D::set_caustics_reference_depth);
-	ClassDB::bind_method(D_METHOD("get_caustics_reference_depth"), &PhysXWaterSurface3D::get_caustics_reference_depth);
-	ClassDB::bind_method(D_METHOD("get_caustics_texture"), &PhysXWaterSurface3D::get_caustics_texture);
-	ClassDB::bind_method(D_METHOD("get_caustics_light_right"), &PhysXWaterSurface3D::get_caustics_light_right);
-	ClassDB::bind_method(D_METHOD("get_caustics_light_up"), &PhysXWaterSurface3D::get_caustics_light_up);
-	ClassDB::bind_method(D_METHOD("get_caustics_origin"), &PhysXWaterSurface3D::get_caustics_origin);
-	ClassDB::bind_method(D_METHOD("get_caustics_half_extent"), &PhysXWaterSurface3D::get_caustics_half_extent);
-	ClassDB::bind_method(D_METHOD("get_caustics_tile_size"), &PhysXWaterSurface3D::get_caustics_tile_size);
+	ClassDB::bind_method(D_METHOD("set_caustics_enabled", "enabled"), &WaterBody3D::set_caustics_enabled);
+	ClassDB::bind_method(D_METHOD("get_caustics_enabled"), &WaterBody3D::get_caustics_enabled);
+	ClassDB::bind_method(D_METHOD("set_caustics_sun_direction", "direction"), &WaterBody3D::set_caustics_sun_direction);
+	ClassDB::bind_method(D_METHOD("get_caustics_sun_direction"), &WaterBody3D::get_caustics_sun_direction);
+	ClassDB::bind_method(D_METHOD("set_caustics_reference_depth", "depth"), &WaterBody3D::set_caustics_reference_depth);
+	ClassDB::bind_method(D_METHOD("get_caustics_reference_depth"), &WaterBody3D::get_caustics_reference_depth);
+	ClassDB::bind_method(D_METHOD("get_caustics_texture"), &WaterBody3D::get_caustics_texture);
+	ClassDB::bind_method(D_METHOD("get_caustics_light_right"), &WaterBody3D::get_caustics_light_right);
+	ClassDB::bind_method(D_METHOD("get_caustics_light_up"), &WaterBody3D::get_caustics_light_up);
+	ClassDB::bind_method(D_METHOD("get_caustics_origin"), &WaterBody3D::get_caustics_origin);
+	ClassDB::bind_method(D_METHOD("get_caustics_half_extent"), &WaterBody3D::get_caustics_half_extent);
+	ClassDB::bind_method(D_METHOD("get_caustics_tile_size"), &WaterBody3D::get_caustics_tile_size);
 
-	ClassDB::bind_method(D_METHOD("sample_height", "world_pos"), &PhysXWaterSurface3D::sample_height);
-	ClassDB::bind_method(D_METHOD("sample_height_excluding_wake", "world_pos", "wake"), &PhysXWaterSurface3D::_sample_height_excluding_wake_bind);
-	ClassDB::bind_method(D_METHOD("is_wet", "world_pos"), &PhysXWaterSurface3D::is_wet);
-	ClassDB::bind_method(D_METHOD("submit_sphere", "owner", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_sphere, DEFVAL(1.0f));
-	ClassDB::bind_method(D_METHOD("clear_sphere", "owner"), &PhysXWaterSurface3D::clear_sphere);
-	ClassDB::bind_method(D_METHOD("submit_impulse", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_impulse);
+	ClassDB::bind_method(D_METHOD("sample_height", "world_pos"), &WaterBody3D::sample_height);
+	ClassDB::bind_method(D_METHOD("sample_height_excluding_wake", "world_pos", "wake"), &WaterBody3D::_sample_height_excluding_wake_bind);
+	ClassDB::bind_method(D_METHOD("is_wet", "world_pos"), &WaterBody3D::is_wet);
+	ClassDB::bind_method(D_METHOD("submit_sphere", "owner", "world_pos", "radius", "strength"), &WaterBody3D::submit_sphere, DEFVAL(1.0f));
+	ClassDB::bind_method(D_METHOD("clear_sphere", "owner"), &WaterBody3D::clear_sphere);
+	ClassDB::bind_method(D_METHOD("submit_impulse", "world_pos", "radius", "strength"), &WaterBody3D::submit_impulse);
 
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_VERTEX);
@@ -692,37 +692,37 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "caustics_reference_depth", PROPERTY_HINT_RANGE, "0.1,50,0.1,or_greater"), "set_caustics_reference_depth", "get_caustics_reference_depth");
 }
 
-void PhysXWaterSurface3D::set_domain_size(Vector2 p_size) {
+void WaterBody3D::set_domain_size(Vector2 p_size) {
 	domain_size = p_size;
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_grid_resolution(int p_n) {
+void WaterBody3D::set_grid_resolution(int p_n) {
 	grid_resolution = MAX(p_n, 4);
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_depth(float p_depth) {
+void WaterBody3D::set_depth(float p_depth) {
 	depth = MAX(p_depth, 0.1f);
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_water_level(float p_level) {
+void WaterBody3D::set_water_level(float p_level) {
 	water_level = p_level;
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_damping(float p_damping) {
+void WaterBody3D::set_damping(float p_damping) {
 	damping = p_damping;
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_ripple_amplitude(float p_amplitude) {
+void WaterBody3D::set_ripple_amplitude(float p_amplitude) {
 	ripple_amplitude = MAX(p_amplitude, 0.0f);
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_ocean_grid_resolution(int p_n) {
+void WaterBody3D::set_ocean_grid_resolution(int p_n) {
 	// Must stay a power of two -- the Stockham FFT passes require it (see
 	// water_solver.h). Round up rather than silently misbehave.
 	int n = MAX(p_n, 4);
@@ -734,27 +734,27 @@ void PhysXWaterSurface3D::set_ocean_grid_resolution(int p_n) {
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_ocean_domain_size(Vector2 p_size) {
+void WaterBody3D::set_ocean_domain_size(Vector2 p_size) {
 	ocean_domain_size = p_size;
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_wind_speed(float p_speed) {
+void WaterBody3D::set_wind_speed(float p_speed) {
 	wind_speed = MAX(p_speed, 0.01f);
 	_reinit_spectrum();
 }
 
-void PhysXWaterSurface3D::set_wind_direction(Vector2 p_dir) {
+void WaterBody3D::set_wind_direction(Vector2 p_dir) {
 	wind_direction = p_dir;
 	_reinit_spectrum();
 }
 
-void PhysXWaterSurface3D::set_wave_amplitude(float p_amp) {
+void WaterBody3D::set_wave_amplitude(float p_amp) {
 	wave_amplitude = MAX(p_amp, 0.0f);
 	_reinit_spectrum();
 }
 
-void PhysXWaterSurface3D::set_sea_state(float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch) {
+void WaterBody3D::set_sea_state(float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch) {
 	wind_speed = MAX(p_wind_speed, 0.01f);
 	wind_direction = p_wind_direction;
 	wave_amplitude = MAX(p_wave_amplitude, 0.0f);
@@ -766,7 +766,7 @@ void PhysXWaterSurface3D::set_sea_state(float p_wind_speed, Vector2 p_wind_direc
 // ocean and every texture stay bound (a rebuild left the sea undrawn for a frame -- a flash each time a camera-following
 // square re-centred); the ripples are cleared. A footprint / per-cell seabed depends on where the grid is, so those
 // still rebuild.
-void PhysXWaterSurface3D::recenter(Vector3 p_world_position) {
+void WaterBody3D::recenter(Vector3 p_world_position) {
 	Vector3 p = get_global_position();
 	p.x = p_world_position.x;
 	p.z = p_world_position.z;
@@ -788,7 +788,7 @@ void PhysXWaterSurface3D::recenter(Vector3 p_world_position) {
 
 // The sea state changed: a built solver regenerates its spectrum IN PLACE (no rebuild -- the waves keep their phases,
 // ripples / wakes / foam survive: storms can ramp it); not built yet → the usual rebuild.
-void PhysXWaterSurface3D::_reinit_spectrum() {
+void WaterBody3D::_reinit_spectrum() {
 	if (solver.is_available() && !Engine::get_singleton()->is_editor_hint()) {
 		solver.reinit_spectrum(wind_speed, wind_direction, wave_amplitude, get_effective_fetch());
 		return;
@@ -796,7 +796,7 @@ void PhysXWaterSurface3D::_reinit_spectrum() {
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_choppiness(float p_choppiness) {
+void WaterBody3D::set_choppiness(float p_choppiness) {
 	choppiness = MAX(p_choppiness, 0.0f);
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("choppiness", choppiness);
@@ -804,66 +804,66 @@ void PhysXWaterSurface3D::set_choppiness(float p_choppiness) {
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
 }
 
-void PhysXWaterSurface3D::set_foam_enabled(bool p_enabled) {
+void WaterBody3D::set_foam_enabled(bool p_enabled) {
 	foam_enabled = p_enabled;
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
 }
 
-void PhysXWaterSurface3D::set_shore_undertow(float p_speed) {
+void WaterBody3D::set_shore_undertow(float p_speed) {
 	shore_undertow = MAX(p_speed, 0.0f);
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
 }
 
-void PhysXWaterSurface3D::set_swash_run_up(float p_height) {
+void WaterBody3D::set_swash_run_up(float p_height) {
 	swash_run_up = MAX(p_height, 0.0f);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
 }
 
-void PhysXWaterSurface3D::set_swash_drain_speed(float p_speed) {
+void WaterBody3D::set_swash_drain_speed(float p_speed) {
 	swash_drain_speed = MAX(p_speed, 0.01f);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
 }
 
-void PhysXWaterSurface3D::set_wet_sand_dry_time(float p_seconds) {
+void WaterBody3D::set_wet_sand_dry_time(float p_seconds) {
 	wet_sand_dry_time = MAX(p_seconds, 0.1f);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
 }
 
-void PhysXWaterSurface3D::set_open_sea_beyond(bool p_open) {
+void WaterBody3D::set_open_sea_beyond(bool p_open) {
 	open_sea_beyond = p_open;
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("open_sea_beyond", open_sea_beyond);
 	}
 }
 
-void PhysXWaterSurface3D::set_shore_foam_band(float p_depth) {
+void WaterBody3D::set_shore_foam_band(float p_depth) {
 	shore_foam_band = MAX(p_depth, 0.0f);
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
 }
 
-void PhysXWaterSurface3D::set_foam_threshold(float p_threshold) {
+void WaterBody3D::set_foam_threshold(float p_threshold) {
 	foam_threshold = p_threshold;
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
 }
 
-void PhysXWaterSurface3D::set_foam_persistence(float p_seconds) {
+void WaterBody3D::set_foam_persistence(float p_seconds) {
 	foam_persistence = MAX(p_seconds, 0.05f);
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
 }
 
-void PhysXWaterSurface3D::set_normal_mode(NormalMode p_mode) {
+void WaterBody3D::set_normal_mode(NormalMode p_mode) {
 	normal_mode = p_mode;
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("per_pixel_normals", normal_mode == NORMAL_MODE_PER_PIXEL);
 	}
 }
 
-void PhysXWaterSurface3D::set_fetch(float p_fetch) {
+void WaterBody3D::set_fetch(float p_fetch) {
 	fetch = MAX(p_fetch, 0.0f);
 	_reinit_spectrum();
 }
 
-float PhysXWaterSurface3D::get_effective_fetch() const {
+float WaterBody3D::get_effective_fetch() const {
 	if (fetch > 0.0f) {
 		return fetch;
 	}
@@ -872,59 +872,59 @@ float PhysXWaterSurface3D::get_effective_fetch() const {
 	return footprint_extent > 0.0 ? (float)footprint_extent : 100000.0f;
 }
 
-void PhysXWaterSurface3D::set_seabed_from_floor(bool p_enabled) {
+void WaterBody3D::set_seabed_from_floor(bool p_enabled) {
 	seabed_from_floor = p_enabled;
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_seabed_collision_mask(uint32_t p_mask) {
+void WaterBody3D::set_seabed_collision_mask(uint32_t p_mask) {
 	seabed_collision_mask = p_mask;
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_shallow_fade_depth(float p_depth) {
+void WaterBody3D::set_shallow_fade_depth(float p_depth) {
 	shallow_fade_depth = MAX(p_depth, 0.01f);
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_render_extent(float p_extent) {
+void WaterBody3D::set_render_extent(float p_extent) {
 	render_extent = MAX(p_extent, 0.0f);
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_surface_mesh(const Ref<Mesh> &p_mesh) {
+void WaterBody3D::set_surface_mesh(const Ref<Mesh> &p_mesh) {
 	surface_mesh = p_mesh;
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_water_material(const Ref<ShaderMaterial> &p_material) {
+void WaterBody3D::set_water_material(const Ref<ShaderMaterial> &p_material) {
 	water_material = p_material;
 	if (mesh_instance != nullptr && water_material.is_valid()) {
 		mesh_instance->set_material_override(water_material);
 	}
 }
 
-void PhysXWaterSurface3D::set_caustics_enabled(bool p_enabled) {
+void WaterBody3D::set_caustics_enabled(bool p_enabled) {
 	caustics_enabled = p_enabled;
 	_rebuild();
 }
 
-void PhysXWaterSurface3D::set_caustics_sun_direction(Vector3 p_direction) {
+void WaterBody3D::set_caustics_sun_direction(Vector3 p_direction) {
 	caustics_sun_direction = p_direction;
 }
 
-void PhysXWaterSurface3D::set_caustics_reference_depth(float p_depth) {
+void WaterBody3D::set_caustics_reference_depth(float p_depth) {
 	caustics_reference_depth = MAX(p_depth, 0.1f);
 }
 
-Ref<Texture2D> PhysXWaterSurface3D::get_caustics_texture() const {
+Ref<Texture2D> WaterBody3D::get_caustics_texture() const {
 	if (!caustics_enabled || !solver.is_available() || caustics_texture.is_null()) {
 		return Ref<Texture2D>();
 	}
 	return caustics_texture;
 }
 
-void PhysXWaterSurface3D::_notification(int p_what) {
+void WaterBody3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
 			_rebuild();
@@ -949,7 +949,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 	}
 }
 
-void PhysXWaterSurface3D::_rebuild() {
+void WaterBody3D::_rebuild() {
 	if (!is_inside_world()) {
 		return;
 	}
@@ -980,7 +980,7 @@ void PhysXWaterSurface3D::_rebuild() {
 	if (surface_mesh.is_valid()) {
 		const Vector<Vector2> tris = _collect_footprint();
 		if (tris.is_empty()) {
-			WARN_PRINT("PhysXWaterSurface3D: surface_mesh has no triangles with any X/Z extent; using the square domain instead.");
+			WARN_PRINT("WaterBody3D: surface_mesh has no triangles with any X/Z extent; using the square domain instead.");
 		} else {
 			Rect2 bounds(tris[0], Vector2());
 			for (const Vector2 &v : tris) {
@@ -1055,7 +1055,7 @@ void PhysXWaterSurface3D::_rebuild() {
 	_configure_solver();
 }
 
-void PhysXWaterSurface3D::_sample_seabed() {
+void WaterBody3D::_sample_seabed() {
 	// One ray per ripple cell center, straight down from well above the water
 	// onto static bodies only: anything else it hits (a floater, a player) is
 	// excluded and the ray cast again. The seabed can rise above the water --
@@ -1102,11 +1102,11 @@ void PhysXWaterSurface3D::_sample_seabed() {
 		}
 	}
 	if (hits == 0) {
-		WARN_PRINT("PhysXWaterSurface3D: seabed_from_floor found no static body under the water (check seabed_collision_mask); using the constant depth.");
+		WARN_PRINT("WaterBody3D: seabed_from_floor found no static body under the water (check seabed_collision_mask); using the constant depth.");
 	}
 }
 
-void PhysXWaterSurface3D::_update_cell_fade() {
+void WaterBody3D::_update_cell_fade() {
 	cell_fade.resize(cell_depth.size());
 	float *fw = cell_fade.ptrw();
 	for (int i = 0; i < cell_depth.size(); i++) {
@@ -1114,7 +1114,7 @@ void PhysXWaterSurface3D::_update_cell_fade() {
 	}
 }
 
-void PhysXWaterSurface3D::_configure_solver() {
+void WaterBody3D::_configure_solver() {
 	_update_cell_fade();
 	WaterSolver::Settings s;
 	s.grid_resolution = grid_resolution;
@@ -1143,13 +1143,13 @@ void PhysXWaterSurface3D::_configure_solver() {
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
 	if (!solver.has_device() && !warned_no_device) {
 		warned_no_device = true;
-		WARN_PRINT("PhysXWaterSurface3D: the water compute solver could not start (no RenderingDevice / compute support).");
+		WARN_PRINT("WaterBody3D: the water compute solver could not start (no RenderingDevice / compute support).");
 	}
 
 	frames_since_refresh = REFRESH_EVERY_FRAMES; // force an immediate CPU cache refresh on the next _update()
 }
 
-void PhysXWaterSurface3D::_detach_textures() {
+void WaterBody3D::_detach_textures() {
 	const Ref<Texture2DRD> textures[] = { ripple_height_tex, ocean_height_tex, ocean_fade_tex, shore_depth_tex, ocean_disp_tex, ocean_deriv_tex, ocean_foam_tex, shore_foam_tex, swash_tex, caustics_texture };
 	for (const Ref<Texture2DRD> &texture : textures) {
 		if (texture.is_valid()) {
@@ -1159,7 +1159,7 @@ void PhysXWaterSurface3D::_detach_textures() {
 	textures_bound = false; // rebound once the solver's (new) textures exist
 }
 
-void PhysXWaterSurface3D::_update_mesh_offset() {
+void WaterBody3D::_update_mesh_offset() {
 	// Open water past the simulated square: the mesh's vertices spread out
 	// with distance from its dense core, and far out they're meters apart --
 	// too coarse for the short waves, so what's drawn there missed what
@@ -1193,7 +1193,7 @@ void PhysXWaterSurface3D::_update_mesh_offset() {
 	}
 }
 
-void PhysXWaterSurface3D::_update(double p_delta) {
+void WaterBody3D::_update(double p_delta) {
 	if (Engine::get_singleton()->is_editor_hint()) {
 		return;
 	}
@@ -1225,7 +1225,7 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 	}
 }
 
-void PhysXWaterSurface3D::_bind_textures() {
+void WaterBody3D::_bind_textures() {
 	// Zero-copy: wrap the solver's own RD texture RIDs directly. Set once --
 	// Texture2DRD holds the RID by reference, so whatever the blit shaders
 	// write each step (see water_solver.cpp's rt_step()) is what the
@@ -1286,7 +1286,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 	textures_bound = true;
 }
 
-void PhysXWaterSurface3D::_refresh_cpu_cache() {
+void WaterBody3D::_refresh_cpu_cache() {
 	// CPU-side cache for sample_height() only -- rendering doesn't touch
 	// this at all (see _bind_textures()). Non-blocking: just whatever the
 	// solver's last async readback landed, a few frames stale -- fine for
@@ -1297,7 +1297,7 @@ void PhysXWaterSurface3D::_refresh_cpu_cache() {
 	solver.get_ocean_dz_grid(cached_ocean_dz);
 }
 
-float PhysXWaterSurface3D::_bilinear_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z, bool p_repeat) const {
+float WaterBody3D::_bilinear_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z, bool p_repeat) const {
 	if (p_grid.is_empty() || p_n <= 0) {
 		return 0.0f;
 	}
@@ -1330,11 +1330,11 @@ float PhysXWaterSurface3D::_bilinear_sample(const Vector<float> &p_grid, int p_n
 	return Math::lerp(Math::lerp(h00, h10, fx), Math::lerp(h01, h11, fx), fz);
 }
 
-float PhysXWaterSurface3D::sample_height(Vector3 p_world_pos) const {
+float WaterBody3D::sample_height(Vector3 p_world_pos) const {
 	return sample_height_excluding_wake(p_world_pos, ObjectID());
 }
 
-int PhysXWaterSurface3D::register_wake(ObjectID p_wake) {
+int WaterBody3D::register_wake(ObjectID p_wake) {
 	for (int i = 0; i < MAX_WAKES; i++) {
 		if (wakes[i] == p_wake || ObjectDB::get_instance(wakes[i]) == nullptr) {
 			wakes[i] = p_wake;
@@ -1344,7 +1344,7 @@ int PhysXWaterSurface3D::register_wake(ObjectID p_wake) {
 	return -1;
 }
 
-void PhysXWaterSurface3D::unregister_wake(int p_slot) {
+void WaterBody3D::unregister_wake(int p_slot) {
 	ERR_FAIL_INDEX(p_slot, MAX_WAKES);
 	wakes[p_slot] = ObjectID();
 	if (water_material.is_valid()) {
@@ -1353,7 +1353,7 @@ void PhysXWaterSurface3D::unregister_wake(int p_slot) {
 	}
 }
 
-void PhysXWaterSurface3D::set_wake_slot(int p_slot, const Ref<Texture2D> &p_height, const Vector4 &p_rect) {
+void WaterBody3D::set_wake_slot(int p_slot, const Ref<Texture2D> &p_height, const Vector4 &p_rect) {
 	ERR_FAIL_INDEX(p_slot, MAX_WAKES);
 	if (water_material.is_null()) {
 		return;
@@ -1365,11 +1365,11 @@ void PhysXWaterSurface3D::set_wake_slot(int p_slot, const Ref<Texture2D> &p_heig
 	water_material->set_shader_parameter("wake_rect_" + i, p_rect);
 }
 
-float PhysXWaterSurface3D::_sample_height_excluding_wake_bind(Vector3 p_world_pos, Object *p_wake) const {
+float WaterBody3D::_sample_height_excluding_wake_bind(Vector3 p_world_pos, Object *p_wake) const {
 	return sample_height_excluding_wake(p_world_pos, p_wake != nullptr ? p_wake->get_instance_id() : ObjectID());
 }
 
-float PhysXWaterSurface3D::sample_height_excluding_wake(Vector3 p_world_pos, ObjectID p_wake) const {
+float WaterBody3D::sample_height_excluding_wake(Vector3 p_world_pos, ObjectID p_wake) const {
 	if (!is_wet(p_world_pos)) {
 		return -Math::INF;
 	}
@@ -1412,7 +1412,7 @@ float PhysXWaterSurface3D::sample_height_excluding_wake(Vector3 p_world_pos, Obj
 		if (wakes[i] == p_wake) {
 			continue;
 		}
-		const PhysXWaterWake3D *w = ObjectDB::get_instance<PhysXWaterWake3D>(wakes[i]);
+		const WaterWake3D *w = ObjectDB::get_instance<WaterWake3D>(wakes[i]);
 		if (w != nullptr) {
 			const float out = Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(x / active_domain_size.x), Math::abs(z / active_domain_size.y)));
 			wake += w->sample_height(p_world_pos) * Math::lerp(1.0f, out, w->get_shore_grid_fade());
@@ -1425,15 +1425,15 @@ float PhysXWaterSurface3D::sample_height_excluding_wake(Vector3 p_world_pos, Obj
 	return get_global_position().y + ripple + ocean + wake;
 }
 
-bool PhysXWaterSurface3D::_open_beyond() const {
+bool WaterBody3D::_open_beyond() const {
 	return surface_mesh.is_null() && render_extent > MAX(domain_size.x, domain_size.y);
 }
 
-bool PhysXWaterSurface3D::_inside_render_extent(float p_rel_x, float p_rel_z) const {
+bool WaterBody3D::_inside_render_extent(float p_rel_x, float p_rel_z) const {
 	return Math::abs(p_rel_x) <= render_extent * 0.5f && Math::abs(p_rel_z) <= render_extent * 0.5f;
 }
 
-bool PhysXWaterSurface3D::is_wet(Vector3 p_world_pos) const {
+bool WaterBody3D::is_wet(Vector3 p_world_pos) const {
 	const float rel_x = p_world_pos.x - grid_center.x;
 	const float rel_z = p_world_pos.z - grid_center.y;
 	if (_open_beyond() && !_inside_render_extent(rel_x, rel_z)) {
@@ -1464,7 +1464,7 @@ bool PhysXWaterSurface3D::is_wet(Vector3 p_world_pos) const {
 	return cell_depth[gz * n + gx] > 0.0f;
 }
 
-Vector<Vector2> PhysXWaterSurface3D::_collect_footprint() const {
+Vector<Vector2> WaterBody3D::_collect_footprint() const {
 	Vector<Vector2> tris;
 	if (surface_mesh.is_null()) {
 		return tris;
@@ -1494,7 +1494,7 @@ Vector<Vector2> PhysXWaterSurface3D::_collect_footprint() const {
 	return tris;
 }
 
-PackedByteArray PhysXWaterSurface3D::_rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n) {
+PackedByteArray WaterBody3D::_rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n) {
 	// A cell is wet when its center lies inside any footprint triangle -- the
 	// same cell-centre convention as water_ripple.glsl's xz.
 	PackedByteArray mask;
@@ -1523,7 +1523,7 @@ PackedByteArray PhysXWaterSurface3D::_rasterize_wet_mask(const Vector<Vector2> &
 	return mask;
 }
 
-Ref<Mesh> PhysXWaterSurface3D::_build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent) const {
+Ref<Mesh> WaterBody3D::_build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent) const {
 	// A regular grid of (2K+1)^2 vertices whose square rings are spread out
 	// from the center: rings up to K0 are the simulated span at uniform
 	// spacing, and each ring past it is 15% further out than the step before
@@ -1606,7 +1606,7 @@ Ref<Mesh> PhysXWaterSurface3D::_build_extended_plane(Vector2 p_inner, int p_inne
 	return mesh;
 }
 
-Ref<Mesh> PhysXWaterSurface3D::_build_footprint_mesh(const Vector<Vector2> &p_tris, const Rect2 &p_bounds, int p_cells) const {
+Ref<Mesh> WaterBody3D::_build_footprint_mesh(const Vector<Vector2> &p_tris, const Rect2 &p_bounds, int p_cells) const {
 	// Resample the footprint into an even grid so the height fields have
 	// vertices to displace everywhere (a CSG disc is a fan of long slivers
 	// with no interior vertices). Cells no triangle edge passes through are
@@ -1745,14 +1745,14 @@ Ref<Mesh> PhysXWaterSurface3D::_build_footprint_mesh(const Vector<Vector2> &p_tr
 	return mesh;
 }
 
-void PhysXWaterSurface3D::submit_sphere(int p_owner, Vector3 p_world_pos, float p_radius, float p_strength) {
+void WaterBody3D::submit_sphere(int p_owner, Vector3 p_world_pos, float p_radius, float p_strength) {
 	solver.submit_sphere((uint64_t)p_owner, p_world_pos, p_radius, p_strength);
 }
 
-void PhysXWaterSurface3D::clear_sphere(int p_owner) {
+void WaterBody3D::clear_sphere(int p_owner) {
 	solver.clear_sphere((uint64_t)p_owner);
 }
 
-void PhysXWaterSurface3D::submit_impulse(Vector3 p_world_pos, float p_radius, float p_strength) {
+void WaterBody3D::submit_impulse(Vector3 p_world_pos, float p_radius, float p_strength) {
 	solver.submit_impulse(p_world_pos, p_radius, p_strength);
 }

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<class name="PhysXBuoyancy3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+<class name="WaterBuoyancy3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
-		Floats its parent [RigidBody3D] on a [PhysXWaterSurface3D].
+		Floats its parent [RigidBody3D] on a [WaterBody3D].
 	</brief_description>
 	<description>
 		Add as a child of a [RigidBody3D] and set [member water_surface_path]. Sample points on the hull each carry a share of the hull's footprint ([member hull_area]): the water pushes each one up by the weight of the water it displaces (density x gravity x area x depth, up to [member hull_height]), so the body settles at its real draft for its mass, pitches and rolls with the waves, and rights itself from the spread of the points. Submerged points drag against the water, and the body disturbs the water's ripple layer, more as it moves.
 		With no [member sample_points], [member hull_area] or [member hull_height] set, they come from the bounds of the body's [CollisionShape3D] children: six points on the bottom (three along the longer side, two across), three quarters of the bounding footprint, and its height.
-		It only applies [RigidBody3D] forces, so it works with whichever physics engine is selected, not just PhysX. For a powered boat, add a [PhysXBoat3D] next to it, and a [PhysXWaterWake3D] for its wake: the body floats on the water without its own wake (other bodies ride it).
+		It only applies [RigidBody3D] forces, so it works with whichever physics engine is selected, not just PhysX. For a powered boat, add a [WaterBoat3D] next to it, and a [WaterWake3D] for its wake: the body floats on the water without its own wake (other bodies ride it).
 	</description>
 	<tutorials>
 	</tutorials>
@@ -33,7 +33,7 @@
 			<return type="float" />
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
-				The water surface height at [param world_pos] (see [method PhysXWaterSurface3D.sample_height]); [code]-INF[/code] where there is no water.
+				The water surface height at [param world_pos] (see [method WaterBody3D.sample_height]); [code]-INF[/code] where there is no water.
 			</description>
 		</method>
 	</methods>
@@ -51,7 +51,7 @@
 			How deep (m) the hull can sink before the push stops growing -- the depth at which it is fully under. [code]0[/code] uses the collision shapes' bounding height.
 		</member>
 		<member name="linear_drag" type="float" setter="set_linear_drag" getter="get_linear_drag" default="60.0">
-			Drag on each submerged point against its velocity (N per m/s per m² of footprint, scaled by how deep it is). Keeps the body from bobbing forever and settles drifting. A [PhysXBoat3D] adds its own directional hull drag on top.
+			Drag on each submerged point against its velocity (N per m/s per m² of footprint, scaled by how deep it is). Keeps the body from bobbing forever and settles drifting. A [WaterBoat3D] adds its own directional hull drag on top.
 		</member>
 		<member name="ripple_radius" type="float" setter="set_ripple_radius" getter="get_ripple_radius" default="0.0">
 			Radius (m) of the body's disturbance in the ripple layer. [code]0[/code] uses half the collision shapes' footprint size.
@@ -69,7 +69,7 @@
 			Density of the water (kg/m³). [code]1000[/code] for fresh water, about [code]1025[/code] for sea water.
 		</member>
 		<member name="water_surface_path" type="NodePath" setter="set_water_surface_path" getter="get_water_surface_path" default="NodePath(&quot;&quot;)">
-			The [PhysXWaterSurface3D] to float on.
+			The [WaterBody3D] to float on.
 		</member>
 	</members>
 </class>

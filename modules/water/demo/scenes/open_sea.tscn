@@ -1,0 +1,66 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/free_camera.gd" id="1_cam"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.13, 0.3, 0.62, 1)
+sky_horizon_color = Color(0.62, 0.73, 0.86, 1)
+ground_bottom_color = Color(0.05, 0.12, 0.2, 1)
+ground_horizon_color = Color(0.52, 0.62, 0.74, 1)
+
+[sub_resource type="Sky" id="Sky_main"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 2
+sky = SubResource("Sky_main")
+tonemap_mode = 2
+fog_enabled = true
+fog_light_color = Color(0.62, 0.72, 0.84, 1)
+fog_density = 0.0012
+
+[sub_resource type="StandardMaterial3D" id="Mat_floater"]
+albedo_color = Color(0.83, 0.61, 0.32, 1)
+roughness = 0.6
+
+[sub_resource type="BoxMesh" id="Mesh_floater"]
+material = SubResource("Mat_floater")
+size = Vector3(1.5, 0.6, 3)
+
+[sub_resource type="BoxShape3D" id="Shape_floater"]
+size = Vector3(1.5, 0.6, 3)
+
+[node name="OpenSea" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-38, 28, 0)
+shadow_enabled = true
+
+[node name="WaterBody3D" type="WaterBody3D" parent="."]
+render_extent = 1500.0
+ocean_domain_size = Vector2(80, 80)
+ocean_grid_resolution = 128
+grid_resolution = 128
+wind_speed = 11.0
+wave_amplitude = 1.3
+choppiness = 1.1
+
+[node name="Floater" type="RigidBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.4, 0)
+mass = 300.0
+
+[node name="Mesh" type="MeshInstance3D" parent="Floater"]
+mesh = SubResource("Mesh_floater")
+
+[node name="Collision" type="CollisionShape3D" parent="Floater"]
+shape = SubResource("Shape_floater")
+
+[node name="Buoyancy" type="WaterBuoyancy3D" parent="Floater"]
+water_surface_path = NodePath("../../WaterBody3D")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7, 45)
+script = ExtResource("1_cam")

@@ -251,36 +251,7 @@ for _glsl in _mpm_bs_glsl:
     env_physx.GLSL_HEADER(os.path.join("particles", _glsl))
     env_physx.Depends(os.path.join("particles", _glsl + ".gen.h"), _mpm_bs_glsl_dep)
 
-# Water ripple solver (Phase 1 of the FFT ocean + ripple plan).
-_water_glsl = ("water_ripple.glsl",)
-# Moving wake grid -- self-contained, no shared include.
-env_physx.GLSL_HEADER(os.path.join("water", "water_wake.glsl"))
-_water_glsl_dep = [os.path.join("water", "water_inc.glsl"), "#glsl_builders.py"]
-for _glsl in _water_glsl:
-    env_physx.GLSL_HEADER(os.path.join("water", _glsl))
-    env_physx.Depends(os.path.join("water", _glsl + ".gen.h"), _water_glsl_dep)
-
-# FFT ocean spectrum layer (Phase 2) -- each shader is self-contained (its own
-# small Params block), no shared _inc.glsl, so no extra Depends() needed.
-_water_fft_glsl = ("water_spectrum_init.glsl", "water_spectrum_evolve.glsl", "water_fft.glsl")
-for _glsl in _water_fft_glsl:
-    env_physx.GLSL_HEADER(os.path.join("water", _glsl))
-
-# Blit-to-texture (Phase 3, shared-device rewrite) -- also self-contained.
-_water_blit_glsl = (
-    "water_blit_ripple.glsl",
-    "water_blit_ocean.glsl",
-    "water_foam.glsl",
-    "water_shore_foam.glsl",
-    "water_swash.glsl",
-)
-for _glsl in _water_blit_glsl:
-    env_physx.GLSL_HEADER(os.path.join("water", _glsl))
-
-# Light-space caustic map -- a real RD graphics (vertex+fragment) pipeline,
-# not a SubViewport (see water_caustics_map.glsl's own header for why).
-# Self-contained (its own Params block), no shared _inc.glsl.
-env_physx.GLSL_HEADER(os.path.join("water", "water_caustics_map.glsl"))
+# Water (ocean/lakes/rivers) is a separate module: modules/water.
 
 # Godot source files
 module_obj = []
@@ -299,7 +270,6 @@ env_physx.add_source_files(module_obj, "particles/*.cpp")
 env_physx.add_source_files(module_obj, "shapes/*.cpp")
 env_physx.add_source_files(module_obj, "spaces/*.cpp")
 env_physx.add_source_files(module_obj, "vehicle/*.cpp")
-env_physx.add_source_files(module_obj, "water/*.cpp")
 
 if env.editor_build:
     # The PhysX license text, embedded for the export plugin, which ships it next

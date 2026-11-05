@@ -1,0 +1,83 @@
+[gd_scene load_steps=9 format=3]
+
+[ext_resource type="Script" path="res://scripts/boat_drive.gd" id="1_drive"]
+[ext_resource type="Script" path="res://scripts/chase_camera.gd" id="2_cam"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.14, 0.31, 0.62, 1)
+sky_horizon_color = Color(0.66, 0.75, 0.86, 1)
+ground_bottom_color = Color(0.05, 0.12, 0.2, 1)
+ground_horizon_color = Color(0.54, 0.63, 0.74, 1)
+
+[sub_resource type="Sky" id="Sky_main"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 2
+sky = SubResource("Sky_main")
+tonemap_mode = 2
+fog_enabled = true
+fog_light_color = Color(0.64, 0.73, 0.84, 1)
+fog_density = 0.001
+
+[sub_resource type="StandardMaterial3D" id="Mat_hull"]
+albedo_color = Color(0.65, 0.3, 0.22, 1)
+roughness = 0.5
+
+[sub_resource type="BoxMesh" id="Mesh_hull"]
+material = SubResource("Mat_hull")
+size = Vector3(2.4, 1, 5.5)
+
+[sub_resource type="BoxShape3D" id="Shape_hull"]
+size = Vector3(2.4, 1, 5.5)
+
+[node name="BoatDemo" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-36, 30, 0)
+shadow_enabled = true
+
+[node name="WaterBody3D" type="WaterBody3D" parent="."]
+render_extent = 800.0
+domain_size = Vector2(40, 40)
+ocean_domain_size = Vector2(80, 80)
+ocean_grid_resolution = 128
+grid_resolution = 128
+wind_speed = 10.0
+wave_amplitude = 1.2
+choppiness = 1.1
+
+[node name="Boat" type="RigidBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
+mass = 500.0
+
+[node name="Hull" type="MeshInstance3D" parent="Boat"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, 0)
+mesh = SubResource("Mesh_hull")
+
+[node name="HullShape" type="CollisionShape3D" parent="Boat"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, 0)
+shape = SubResource("Shape_hull")
+
+[node name="Buoyancy" type="WaterBuoyancy3D" parent="Boat"]
+water_surface_path = NodePath("../../WaterBody3D")
+
+[node name="Drive" type="WaterBoat3D" parent="Boat"]
+script = ExtResource("1_drive")
+propeller_position = Vector3(0, -0.35, -2.4)
+
+[node name="Wake" type="WaterWake3D" parent="Boat"]
+water_surface_path = NodePath("../../WaterBody3D")
+hull_beam = 2.4
+hull_length = 5.5
+cells = 160
+size = 48.0
+
+[node name="Camera3D" type="Camera3D" parent="."]
+script = ExtResource("2_cam")
+target_path = NodePath("../Boat")
+distance = 12.0
+height = 4.0

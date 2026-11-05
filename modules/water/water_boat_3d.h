@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_boat_3d.h                                                       */
+/*  water_boat_3d.h                                                       */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -32,11 +32,11 @@
 
 #include "scene/3d/node_3d.h"
 
-class PhysXBuoyancy3D;
+class WaterBuoyancy3D;
 class RigidBody3D;
 
 // Drives its parent RigidBody3D as a boat: the forces it makes itself, on
-// top of the PhysXBuoyancy3D (a sibling) that floats it. Forward is +Z.
+// top of the WaterBuoyancy3D (a sibling) that floats it. Forward is +Z.
 // - Propeller: throttle pushes from propeller_position, only while it's in
 //   the water; steering turns it (an outboard or stern drive), and reverse
 //   is weaker.
@@ -48,8 +48,8 @@ class RigidBody3D;
 //   and vertically -- plus pitch/yaw/roll damping, all scaled by how much
 //   of the hull is in the water.
 // Only applies RigidBody3D forces -- works with any physics engine.
-class PhysXBoat3D : public Node3D {
-	GDCLASS(PhysXBoat3D, Node3D);
+class WaterBoat3D : public Node3D {
+	GDCLASS(WaterBoat3D, Node3D);
 
 	float throttle = 0.0f;
 	float steering = 0.0f;
@@ -74,7 +74,7 @@ protected:
 
 public:
 	RigidBody3D *get_body() const;
-	PhysXBuoyancy3D *get_buoyancy() const;
+	WaterBuoyancy3D *get_buoyancy() const;
 
 	void set_throttle(float p_throttle) { throttle = CLAMP(p_throttle, -1.0f, 1.0f); }
 	float get_throttle() const { return throttle; }

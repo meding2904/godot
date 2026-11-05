@@ -15,10 +15,9 @@ interface. On the CPU alone, Jolt is the better choice.
 
 Scenes and a regression-test suite for the module live in a separate Godot
 project: [godot-physx-example](https://github.com/uno1982/godot-physx-example).
-`demo/...` paths referenced in this document (such as the demo boat,
-`demo/common/boat/boat.tscn`) are relative to that repository. Its `test/`
-directory holds per-feature tests that run headless against a custom build;
-see the project's README for the run instructions.
+`demo/...` paths referenced in this document are relative to that repository.
+Its `test/` directory holds per-feature tests that run headless against a
+custom build; see the project's README for the run instructions.
 
 ## Building
 
@@ -927,150 +926,12 @@ vehicle, chassis and wheels both; from the body's side,
 `PhysicsServer3D.body_add_collision_exception(body.get_rid(), vehicle.get_rid())`
 does the same. `Area3D` doesn't detect vehicles yet.
 
-## Water — `PhysXWaterSurface3D`
+## Water
 
-An animated water surface with two GPU compute layers summed into one displaced
-mesh (created automatically as a child): a Tessendorf FFT ocean with a
-fetch-limited JONSWAP wind spectrum (`wind_speed`, `wind_direction`, `fetch`,
-over `ocean_domain_size`; heights in meters at `wave_amplitude` 1) and a local
-ripple layer — a damped shallow-water wave equation over `domain_size` whose
-wave speed follows `depth` — that bodies disturb.
-
-The water is a square by default. Set `surface_mesh` to any flat mesh (a disc
-baked from `CSGCylinder3D`, a kidney bean, a lake with an island) and its X/Z
-footprint becomes the water: the ripple grid fits itself to the outline, waves
-reflect off the shoreline, and the rendered surface is the footprint resampled
-into an even grid, so a coarse or fan-triangulated mesh still animates
-everywhere. With `fetch` left at 0 the footprint also sets the fetch, so an
-enclosed pool only gets small, short wind ripples while an open square is a
-developed sea. The simulation is centered on the node's position; keep the node
-unrotated and unscaled.
-
-`choppiness` adds the ocean waves' horizontal displacement, so crests come
-to a point and troughs flatten. Where it squeezes the surface past
-`foam_threshold` whitecap foam forms; it's kept with the water, not the wave,
-and fades over `foam_persistence` seconds, so crests leave streaks that break
-into lace. A strong wind gets whitecaps and a light one doesn't. `normal_mode` picks how normals and foam are shaded: Per Pixel
-(default) uses exact slopes from the FFT, so crests stay smooth at any mesh
-density; Per Vertex follows the mesh, for a softer or faceted, stylized look.
-
-Set `seabed_from_floor` for water over uneven ground, like a beach or a lake
-bed: each ripple cell's depth is measured once from the floor (static bodies in
-`seabed_collision_mask`). Waves then travel at the local shallow-water speed,
-slowing over shallows, the shoreline falls wherever the ground rises above the
-water, and the ocean chop fades out over the last `shallow_fade_depth` meters.
-Without it, the constant `depth` applies everywhere. On a beach, each arriving
-crest also leaves a thin foam sheet at the waterline (`shore_foam_band`) that
-surges in with the wave and slides back out with the backwash and undertow
-(`shore_undertow`), the shallows turn milky, and the surface feathers out onto
-the sand along a waterline that scallops with the arriving waves rather than
-following the depth contour. That edge is measured in meters of water
-(`swash_reach`, `shore_edge_softness` in the material), so it behaves the same
-whatever `shallow_fade_depth` is. The bigger waves also run up past the
-still-water line as a thin film on the sand (`swash_run_up`,
-`swash_drain_speed`), and the sand they cover stays dark and glossy while it
-dries (`wet_sand_dry_time`). The material's `shore_detail_scale` sets how fine
-the swash edge, the rim lace and the wet-sand line are. The shore patterns
-mirror-repeat past the simulated square, so the beach keeps its variation all
-along the shore.
-
-For open water, `render_extent` renders the surface out to the horizon: the FFT
-ocean tiles seamlessly past the simulated square and ripples settle to still
-water there. The surface draws only the side facing the camera (the top from
-above, the underside from below), and its shaders take their clock from the
-node's `water_time` parameter rather than `TIME`, so an open scene doesn't
-keep the editor redrawing (and competing with Play Scene for the GPU).
-
-**An endless sea that follows the player.** The FFT ocean is periodic and
-fixed to the world (it's sampled at world X/Z, by the shader and by
-`sample_height()` alike), so it has no edge: it covers the whole world by
-itself. Only the ripple square is bounded — the interactive patch where
-floaters splash — so keep it with the player: call `recenter(position)` when
-the player gets some distance from the node (the ocean storm demo uses 10 m).
-It moves the square without rebuilding the surface: the mesh, the textures and
-the ocean carry on, the waves don't move, and only the square's ripples are
-cleared (a surface with a `surface_mesh` footprint or a measured seabed still
-rebuilds, since its depths depend on where the square is). Together with
-`render_extent` that's an endless ocean out to the horizon. The one limit is
-ordinary floating-point precision far from the world origin — at hundreds of
-kilometers rendering and physics start to jitter, as for any Godot scene; large
-worlds shift their origin or use a double-precision build. Over a coastline,
-turn on `open_sea_beyond` so the sea past a moving square stays open deep water
-instead of carrying the square's edge — its seabed, shore foam and wet sand —
-outward.
-
-A custom water material must sample the ocean textures at world X/Z too
-(`world_xz / ocean_domain_size`, not relative to `grid_center`), or its drawn
-waves slide by the re-centre distance on every `recenter()` while the physics
-stays put.
-
-The sea state can change during play: setting `wind_speed`, `wind_direction`,
-`wave_amplitude` or `fetch` on a running surface (or all four at once with
-`set_sea_state()`) regenerates the wave spectrum in place — every wave keeps its
-phase and grows, calms or turns, and ripples, wakes and foam carry on — so a
-storm can build smoothly, every frame if needed. Changing `ocean_domain_size`
-still rebuilds the surface.
-
-`sample_height(position)` returns the same combined surface height on the CPU,
-for buoyancy scripts. Over dry cells (outside a `surface_mesh` footprint, or
-where the seabed is above the water) it returns `-INF` and `is_wet()` is false,
-so floaters on dry land don't float. Call `submit_sphere()` once per physics tick per floating
-body so it actually pushes the water (`ripple_amplitude` scales the wake), or
-`submit_impulse()` for one-off splashes.
-
-`caustics_enabled` (off by default -- the pass draws every frame, so turn it on
-where a floor shows through shallow water) renders a light-space caustic map
-with a direct `RenderingDevice` draw pass along `caustics_sun_direction`. Any material — the
-floor, walls, submerged props — can sample it by projecting its world position
-with `get_caustics_texture()`, `get_caustics_origin()`,
-`get_caustics_light_right()` / `_up()` and `get_caustics_half_extent()`, so the
-light pattern lands on anything under the water rather than only a flat floor.
-The map's green channel marks where sunlight actually came through the water
-(multiply by it, or a pool wall's outside picks up caustics), and the pattern
-repeats every `ocean_domain_size` (`get_caustics_tile_size()`), so a receiver
-can fold its position into one tile and light a whole seabed.
-
-Runs on any GPU with compute support, no CUDA needed. Without compute (e.g.
-headless) the surface stays flat and `sample_height()` returns `water_level`.
-
-## Boats — `PhysXBuoyancy3D`, `PhysXBoat3D`, `PhysXWaterWake3D`, `PhysXWaterSpray3D`
-
-Four nodes, each a child of a `RigidBody3D`, that float and drive it on a
-`PhysXWaterSurface3D`. Buoyancy and the boat only apply `RigidBody3D` forces,
-so they work with whichever physics engine is selected, Jolt included.
-
-- **`PhysXBuoyancy3D`** floats the body: sample points on the hull (six from
-  its collision shapes' bounds by default) each carry a share of `hull_area`
-  and are pushed up by the water they displace, so the body settles at its
-  real draft, pitches and rolls with the waves and rights itself. It reads the
-  water with `sample_height()`, refreshed every physics tick, waves and other
-  bodies' wakes included.
-- **`PhysXBoat3D`** drives it: thrust from a propeller at `propeller_position`
-  (only while it's in the water) that `steering` turns like an outboard, the
-  water across the propeller's leg (it steers with flow and holds the stern on
-  course), and hull drag in the boat's frame — low along the keel, high
-  sideways and vertically, at the bow and stern so the hull's length resists
-  turning and pitching. `hull_drag.z` with `max_thrust` sets the top speed.
-- **`PhysXWaterWake3D`** leaves a wake: a small GPU ripple grid that slides
-  with the boat (fixed to the water, so the wake stays where it was made) and
-  that the hull pushes down, plus foam — two bands peeling off the hull's
-  sides and a propeller band down the middle, fading over `foam_persistence`.
-  The water material draws it and `sample_height()` includes it, so other
-  floaters ride it. A grid big enough to hold a turning circle (`size`, with
-  `cells` for about 0.25 m cells) and a `foam_persistence` of about a lap let
-  the wake close into a ring. `hull_profile` gives the hull's shape seen from
-  above (8 half-beam widths, bow to stern), so a pointed bow's foam hugs its
-  sides; left empty, the hull is treated as a box.
-- **`PhysXWaterSpray3D`** drives ordinary `GPUParticles3D` nodes authored in
-  the editor: bow emitters with speed, stern emitters with thrust, one-shot
-  slam emitters when the hull drops back onto the water. Emitters are held at
-  the water under their place on the hull. The spray leaves foam where it
-  lands (worked out from the emitters' launch geometry, no particle collision
-  needed); `water_collision` adds a collider on the water for spray that
-  should land and skid. Save the emitters with `emitting` off — the node
-  starts them — or the editor redraws every frame for them.
-
-The demo boat is `demo/common/boat/boat.tscn`, on the beach.
+The water system — ocean, lake and river surfaces, buoyancy, boats, wakes and
+spray — lives in its own module: [`modules/water`](../water/README.md).
+It has no PhysX dependency and works with any physics backend, so it is built
+into every engine, not only PhysX-enabled ones.
 
 ## Active ragdolls — joint drives
 
@@ -1246,7 +1107,6 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 | `nodes/` | `PhysXParticleFluid3D`, `PhysXGranular3D`, `PhysXCloth3D`, `PhysXChunkEmitter3D` |
 | `particles/` | the MPM fluid/granular compute solvers and their GLSL shaders |
 | `vehicle/` | `PhysXVehicle3D`, `PhysXMotorcycle3D`, `PhysXTank3D`, `PhysXVehicleWheel3D` and the `PxVehicle2` glue |
-| `water/` | `PhysXWaterSurface3D` and its ripple / FFT ocean / caustics compute and draw passes; `PhysXBuoyancy3D`, `PhysXBoat3D`, `PhysXWaterWake3D` (and its wake compute pass) and `PhysXWaterSpray3D` |
 | `flow/` | `PhysXFlow3D`, `PhysXFlowEmitter3D`, `PhysXFlowRenderEffect`, and Flow's context on Godot's `RenderingDevice` — optional, gated on `flow_sdk=` (see Building above) |
 | `blast/` | `PhysXDestructible3D`, `PhysXBlastAsset`, and the NvBlast fracture-authoring bridge — optional, gated on `blast_sdk=` (see Building above) |
 | `editor/` | viewport gizmos for the fluid and cloth nodes; the Blast fracture dialog and its FileSystem/Inspector plugins |

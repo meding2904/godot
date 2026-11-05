@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_buoyancy_3d.cpp                                                 */
+/*  water_buoyancy_3d.cpp                                                 */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,10 +28,10 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "physx_buoyancy_3d.h"
+#include "water_buoyancy_3d.h"
 
-#include "physx_water_surface_3d.h"
-#include "physx_water_wake_3d.h"
+#include "water_body_3d.h"
+#include "water_wake_3d.h"
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
@@ -40,35 +40,35 @@
 #include "scene/resources/3d/shape_3d.h"
 #include "scene/resources/mesh.h"
 
-void PhysXBuoyancy3D::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("set_water_surface_path", "path"), &PhysXBuoyancy3D::set_water_surface_path);
-	ClassDB::bind_method(D_METHOD("get_water_surface_path"), &PhysXBuoyancy3D::get_water_surface_path);
-	ClassDB::bind_method(D_METHOD("set_sample_points", "points"), &PhysXBuoyancy3D::set_sample_points);
-	ClassDB::bind_method(D_METHOD("get_sample_points"), &PhysXBuoyancy3D::get_sample_points);
-	ClassDB::bind_method(D_METHOD("set_hull_area", "area"), &PhysXBuoyancy3D::set_hull_area);
-	ClassDB::bind_method(D_METHOD("get_hull_area"), &PhysXBuoyancy3D::get_hull_area);
-	ClassDB::bind_method(D_METHOD("set_hull_height", "height"), &PhysXBuoyancy3D::set_hull_height);
-	ClassDB::bind_method(D_METHOD("get_hull_height"), &PhysXBuoyancy3D::get_hull_height);
-	ClassDB::bind_method(D_METHOD("set_water_density", "density"), &PhysXBuoyancy3D::set_water_density);
-	ClassDB::bind_method(D_METHOD("get_water_density"), &PhysXBuoyancy3D::get_water_density);
-	ClassDB::bind_method(D_METHOD("set_linear_drag", "drag"), &PhysXBuoyancy3D::set_linear_drag);
-	ClassDB::bind_method(D_METHOD("get_linear_drag"), &PhysXBuoyancy3D::get_linear_drag);
-	ClassDB::bind_method(D_METHOD("set_angular_drag", "drag"), &PhysXBuoyancy3D::set_angular_drag);
-	ClassDB::bind_method(D_METHOD("get_angular_drag"), &PhysXBuoyancy3D::get_angular_drag);
-	ClassDB::bind_method(D_METHOD("set_disturb_water", "enabled"), &PhysXBuoyancy3D::set_disturb_water);
-	ClassDB::bind_method(D_METHOD("get_disturb_water"), &PhysXBuoyancy3D::get_disturb_water);
-	ClassDB::bind_method(D_METHOD("set_ripple_radius", "radius"), &PhysXBuoyancy3D::set_ripple_radius);
-	ClassDB::bind_method(D_METHOD("get_ripple_radius"), &PhysXBuoyancy3D::get_ripple_radius);
-	ClassDB::bind_method(D_METHOD("set_ripple_rest_strength", "strength"), &PhysXBuoyancy3D::set_ripple_rest_strength);
-	ClassDB::bind_method(D_METHOD("get_ripple_rest_strength"), &PhysXBuoyancy3D::get_ripple_rest_strength);
-	ClassDB::bind_method(D_METHOD("set_ripple_reference_speed", "speed"), &PhysXBuoyancy3D::set_ripple_reference_speed);
-	ClassDB::bind_method(D_METHOD("get_ripple_reference_speed"), &PhysXBuoyancy3D::get_ripple_reference_speed);
-	ClassDB::bind_method(D_METHOD("get_submerged_fraction"), &PhysXBuoyancy3D::get_submerged_fraction);
-	ClassDB::bind_method(D_METHOD("get_point_depths"), &PhysXBuoyancy3D::get_point_depths);
-	ClassDB::bind_method(D_METHOD("get_effective_sample_points"), &PhysXBuoyancy3D::get_effective_sample_points);
-	ClassDB::bind_method(D_METHOD("get_water_height", "world_pos"), &PhysXBuoyancy3D::get_water_height);
+void WaterBuoyancy3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_water_surface_path", "path"), &WaterBuoyancy3D::set_water_surface_path);
+	ClassDB::bind_method(D_METHOD("get_water_surface_path"), &WaterBuoyancy3D::get_water_surface_path);
+	ClassDB::bind_method(D_METHOD("set_sample_points", "points"), &WaterBuoyancy3D::set_sample_points);
+	ClassDB::bind_method(D_METHOD("get_sample_points"), &WaterBuoyancy3D::get_sample_points);
+	ClassDB::bind_method(D_METHOD("set_hull_area", "area"), &WaterBuoyancy3D::set_hull_area);
+	ClassDB::bind_method(D_METHOD("get_hull_area"), &WaterBuoyancy3D::get_hull_area);
+	ClassDB::bind_method(D_METHOD("set_hull_height", "height"), &WaterBuoyancy3D::set_hull_height);
+	ClassDB::bind_method(D_METHOD("get_hull_height"), &WaterBuoyancy3D::get_hull_height);
+	ClassDB::bind_method(D_METHOD("set_water_density", "density"), &WaterBuoyancy3D::set_water_density);
+	ClassDB::bind_method(D_METHOD("get_water_density"), &WaterBuoyancy3D::get_water_density);
+	ClassDB::bind_method(D_METHOD("set_linear_drag", "drag"), &WaterBuoyancy3D::set_linear_drag);
+	ClassDB::bind_method(D_METHOD("get_linear_drag"), &WaterBuoyancy3D::get_linear_drag);
+	ClassDB::bind_method(D_METHOD("set_angular_drag", "drag"), &WaterBuoyancy3D::set_angular_drag);
+	ClassDB::bind_method(D_METHOD("get_angular_drag"), &WaterBuoyancy3D::get_angular_drag);
+	ClassDB::bind_method(D_METHOD("set_disturb_water", "enabled"), &WaterBuoyancy3D::set_disturb_water);
+	ClassDB::bind_method(D_METHOD("get_disturb_water"), &WaterBuoyancy3D::get_disturb_water);
+	ClassDB::bind_method(D_METHOD("set_ripple_radius", "radius"), &WaterBuoyancy3D::set_ripple_radius);
+	ClassDB::bind_method(D_METHOD("get_ripple_radius"), &WaterBuoyancy3D::get_ripple_radius);
+	ClassDB::bind_method(D_METHOD("set_ripple_rest_strength", "strength"), &WaterBuoyancy3D::set_ripple_rest_strength);
+	ClassDB::bind_method(D_METHOD("get_ripple_rest_strength"), &WaterBuoyancy3D::get_ripple_rest_strength);
+	ClassDB::bind_method(D_METHOD("set_ripple_reference_speed", "speed"), &WaterBuoyancy3D::set_ripple_reference_speed);
+	ClassDB::bind_method(D_METHOD("get_ripple_reference_speed"), &WaterBuoyancy3D::get_ripple_reference_speed);
+	ClassDB::bind_method(D_METHOD("get_submerged_fraction"), &WaterBuoyancy3D::get_submerged_fraction);
+	ClassDB::bind_method(D_METHOD("get_point_depths"), &WaterBuoyancy3D::get_point_depths);
+	ClassDB::bind_method(D_METHOD("get_effective_sample_points"), &WaterBuoyancy3D::get_effective_sample_points);
+	ClassDB::bind_method(D_METHOD("get_water_height", "world_pos"), &WaterBuoyancy3D::get_water_height);
 
-	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "water_surface_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D"), "set_water_surface_path", "get_water_surface_path");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "water_surface_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WaterBody3D"), "set_water_surface_path", "get_water_surface_path");
 	ADD_GROUP("Hull", "");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR3_ARRAY, "sample_points"), "set_sample_points", "get_sample_points");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hull_area", PROPERTY_HINT_RANGE, "0,100,0.01,or_greater,suffix:m²"), "set_hull_area", "get_hull_area");
@@ -84,26 +84,26 @@ void PhysXBuoyancy3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_reference_speed", PROPERTY_HINT_RANGE, "0.01,50,0.01,or_greater,suffix:m/s"), "set_ripple_reference_speed", "get_ripple_reference_speed");
 }
 
-RigidBody3D *PhysXBuoyancy3D::get_body() const {
+RigidBody3D *WaterBuoyancy3D::get_body() const {
 	return Object::cast_to<RigidBody3D>(get_parent());
 }
 
-PhysXWaterSurface3D *PhysXBuoyancy3D::get_water_surface() const {
-	return ObjectDB::get_instance<PhysXWaterSurface3D>(water_id);
+WaterBody3D *WaterBuoyancy3D::get_water_surface() const {
+	return ObjectDB::get_instance<WaterBody3D>(water_id);
 }
 
-float PhysXBuoyancy3D::get_water_height(const Vector3 &p_world_pos) const {
-	PhysXWaterSurface3D *water = get_water_surface();
+float WaterBuoyancy3D::get_water_height(const Vector3 &p_world_pos) const {
+	WaterBody3D *water = get_water_surface();
 	return water != nullptr ? water->sample_height_excluding_wake(p_world_pos, wake_id) : -Math::INF;
 }
 
-void PhysXBuoyancy3D::_resolve() {
-	PhysXWaterSurface3D *water = Object::cast_to<PhysXWaterSurface3D>(get_node_or_null(water_surface_path));
+void WaterBuoyancy3D::_resolve() {
+	WaterBody3D *water = Object::cast_to<WaterBody3D>(get_node_or_null(water_surface_path));
 	water_id = water != nullptr ? water->get_instance_id() : ObjectID();
 	wake_id = ObjectID();
 	if (get_parent() != nullptr) {
 		for (int i = 0; i < get_parent()->get_child_count(); i++) {
-			if (Object::cast_to<PhysXWaterWake3D>(get_parent()->get_child(i)) != nullptr) {
+			if (Object::cast_to<WaterWake3D>(get_parent()->get_child(i)) != nullptr) {
 				wake_id = get_parent()->get_child(i)->get_instance_id();
 			}
 		}
@@ -157,9 +157,9 @@ void PhysXBuoyancy3D::_resolve() {
 	point_depths.fill(-Math::INF);
 }
 
-void PhysXBuoyancy3D::_physics_step() {
+void WaterBuoyancy3D::_physics_step() {
 	RigidBody3D *body = get_body();
-	PhysXWaterSurface3D *water = get_water_surface();
+	WaterBody3D *water = get_water_surface();
 	if (body == nullptr || water == nullptr || points.is_empty()) {
 		submerged_fraction = 0.0f;
 		return;
@@ -208,7 +208,7 @@ void PhysXBuoyancy3D::_physics_step() {
 	}
 }
 
-void PhysXBuoyancy3D::_notification(int p_what) {
+void WaterBuoyancy3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
 			_resolve();
@@ -220,7 +220,7 @@ void PhysXBuoyancy3D::_notification(int p_what) {
 			_physics_step();
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
-			PhysXWaterSurface3D *water = get_water_surface();
+			WaterBody3D *water = get_water_surface();
 			if (water != nullptr) {
 				water->clear_sphere((int)(uint64_t)get_instance_id());
 			}
@@ -228,7 +228,7 @@ void PhysXBuoyancy3D::_notification(int p_what) {
 	}
 }
 
-void PhysXBuoyancy3D::set_water_surface_path(const NodePath &p_path) {
+void WaterBuoyancy3D::set_water_surface_path(const NodePath &p_path) {
 	water_surface_path = p_path;
 	if (is_inside_tree()) {
 		_resolve();
@@ -236,49 +236,49 @@ void PhysXBuoyancy3D::set_water_surface_path(const NodePath &p_path) {
 	update_configuration_warnings();
 }
 
-void PhysXBuoyancy3D::set_sample_points(const PackedVector3Array &p_points) {
+void WaterBuoyancy3D::set_sample_points(const PackedVector3Array &p_points) {
 	sample_points = p_points;
 	if (is_inside_tree()) {
 		_resolve();
 	}
 }
 
-void PhysXBuoyancy3D::set_hull_area(float p_area) {
+void WaterBuoyancy3D::set_hull_area(float p_area) {
 	hull_area = MAX(p_area, 0.0f);
 	if (is_inside_tree()) {
 		_resolve();
 	}
 }
 
-void PhysXBuoyancy3D::set_hull_height(float p_height) {
+void WaterBuoyancy3D::set_hull_height(float p_height) {
 	hull_height = MAX(p_height, 0.0f);
 	if (is_inside_tree()) {
 		_resolve();
 	}
 }
 
-void PhysXBuoyancy3D::set_disturb_water(bool p_enabled) {
+void WaterBuoyancy3D::set_disturb_water(bool p_enabled) {
 	disturb_water = p_enabled;
-	PhysXWaterSurface3D *water = get_water_surface();
+	WaterBody3D *water = get_water_surface();
 	if (!disturb_water && water != nullptr) {
 		water->clear_sphere((int)(uint64_t)get_instance_id());
 	}
 }
 
-void PhysXBuoyancy3D::set_ripple_radius(float p_radius) {
+void WaterBuoyancy3D::set_ripple_radius(float p_radius) {
 	ripple_radius = MAX(p_radius, 0.0f);
 	if (is_inside_tree()) {
 		_resolve();
 	}
 }
 
-PackedStringArray PhysXBuoyancy3D::get_configuration_warnings() const {
+PackedStringArray WaterBuoyancy3D::get_configuration_warnings() const {
 	PackedStringArray warnings = Node3D::get_configuration_warnings();
 	if (Object::cast_to<RigidBody3D>(get_parent()) == nullptr) {
-		warnings.push_back(RTR("PhysXBuoyancy3D only floats a RigidBody3D: make it a child of one."));
+		warnings.push_back(RTR("WaterBuoyancy3D only floats a RigidBody3D: make it a child of one."));
 	}
 	if (water_surface_path.is_empty()) {
-		warnings.push_back(RTR("Set water_surface_path to the PhysXWaterSurface3D to float on."));
+		warnings.push_back(RTR("Set water_surface_path to the WaterBody3D to float on."));
 	}
 	return warnings;
 }

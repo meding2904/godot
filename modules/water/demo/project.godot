@@ -1,0 +1,20 @@
+; Engine configuration file.
+; Demo project for modules/water. Open it with the engine build from this
+; checkout, or run a scene directly:
+;   ../../bin/godot.linuxbsd.editor.x86_64 --path . scenes/checklist.tscn
+config_version=5
+
+[application]
+
+config/name="Water demo"
+run/main_scene="res://scenes/open_sea.tscn"
+config/features=PackedStringArray("4.7", "Forward Plus")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+
+[rendering]
+
+renderer/rendering_method="forward_plus"

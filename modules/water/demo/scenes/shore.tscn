@@ -1,0 +1,68 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/free_camera.gd" id="1_cam"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.18, 0.34, 0.6, 1)
+sky_horizon_color = Color(0.78, 0.8, 0.82, 1)
+ground_bottom_color = Color(0.08, 0.13, 0.18, 1)
+ground_horizon_color = Color(0.7, 0.72, 0.74, 1)
+
+[sub_resource type="Sky" id="Sky_main"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 2
+sky = SubResource("Sky_main")
+tonemap_mode = 2
+fog_enabled = true
+fog_light_color = Color(0.76, 0.8, 0.84, 1)
+fog_density = 0.002
+
+[sub_resource type="StandardMaterial3D" id="Mat_sand"]
+albedo_color = Color(0.78, 0.7, 0.55, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="Mesh_beach"]
+material = SubResource("Mat_sand")
+size = Vector3(400, 20, 400)
+
+[sub_resource type="BoxShape3D" id="Shape_beach"]
+size = Vector3(400, 20, 400)
+
+[node name="Shore" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-32, 40, 0)
+shadow_enabled = true
+
+[node name="Beach" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.99863, -0.05234, 0, 0.05234, 0.99863, 0, -9.5, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Beach"]
+mesh = SubResource("Mesh_beach")
+
+[node name="Collision" type="CollisionShape3D" parent="Beach"]
+shape = SubResource("Shape_beach")
+
+[node name="WaterBody3D" type="WaterBody3D" parent="."]
+domain_size = Vector2(60, 60)
+ocean_domain_size = Vector2(80, 80)
+ocean_grid_resolution = 128
+grid_resolution = 192
+render_extent = 200.0
+seabed_from_floor = true
+seabed_collision_mask = 1
+depth = 6.0
+shallow_fade_depth = 1.5
+wind_speed = 8.0
+wave_amplitude = 0.8
+choppiness = 1.2
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 12, 3.4, 9)
+script = ExtResource("1_cam")
+look_target = Vector3(0, 0.3, -14)

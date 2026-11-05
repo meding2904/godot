@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_water_surface_3d.h                                              */
+/*  water_body_3d.h                                              */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -66,8 +66,8 @@ class Texture2D;
 // separate from the zero-copy texture path above per the project plan's own
 // note: two consumers, two different freshness/precision needs, one
 // underlying simulation.
-class PhysXWaterSurface3D : public Node3D {
-	GDCLASS(PhysXWaterSurface3D, Node3D);
+class WaterBody3D : public Node3D {
+	GDCLASS(WaterBody3D, Node3D);
 
 protected:
 	static void _bind_methods();
@@ -225,7 +225,7 @@ public:
 	float sample_height_excluding_wake(Vector3 p_world_pos, ObjectID p_wake) const;
 	// Script-side: the wake as a node (null leaves nothing out).
 	float _sample_height_excluding_wake_bind(Vector3 p_world_pos, Object *p_wake) const;
-	// Moving wake grids (PhysXWaterWake3D): up to MAX_WAKES are drawn and
+	// Moving wake grids (WaterWake3D): up to MAX_WAKES are drawn and
 	// sampled. register_wake() returns a slot (-1 when full).
 	static constexpr int MAX_WAKES = 4;
 	int register_wake(ObjectID p_wake);
@@ -371,4 +371,4 @@ private:
 	bool _inside_render_extent(float p_rel_x, float p_rel_z) const;
 };
 
-VARIANT_ENUM_CAST(PhysXWaterSurface3D::NormalMode);
+VARIANT_ENUM_CAST(WaterBody3D::NormalMode);

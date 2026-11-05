@@ -34,7 +34,7 @@ layout(set = 0, binding = 3, std430) restrict buffer HeightOut {
 };
 
 // Body-disturbance sources, submitted by the node once per physics tick from
-// buoyant_body.gd (or similar) via PhysXWaterSurface3D::submit_sphere()/
+// buoyant_body.gd (or similar) via WaterBody3D::submit_sphere()/
 // submit_impulse() -- see the plan's "push, not discovery" rationale. The
 // ripple field is 2D (height over XZ), so these pack world XZ, not a full
 // 3D point: x=world_x, y=world_z, z=radius, w=strength (0..1).
@@ -46,7 +46,7 @@ layout(set = 0, binding = 5, std430) restrict buffer Impulses {
 };
 
 // Still-water depth per ripple cell (R16F, meters); <= 0 is dry land. From
-// the seabed (PhysXWaterSurface3D::seabed_from_floor) and/or the
+// the seabed (WaterBody3D::seabed_from_floor) and/or the
 // surface_mesh footprint, or the constant depth everywhere. Uploaded once
 // per configure(). Read with texelFetch only.
 layout(set = 0, binding = 6) uniform sampler2D cell_depth_tex;

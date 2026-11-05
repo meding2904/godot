@@ -1,0 +1,36 @@
+#!/usr/bin/env python
+from misc.utility.scons_hints import *
+
+Import("env")
+Import("env_modules")
+
+env_water = env_modules.Clone()
+
+# Ripple solver -- shares water_inc.glsl, which GLSL_HEADER does not see, so bind
+# the dependency by name: a Glob would only catch headers that already exist.
+env_water.GLSL_HEADER("water_ripple.glsl")
+env_water.Depends("water_ripple.glsl.gen.h", ["water_inc.glsl", "#glsl_builders.py"])
+
+# Moving wake grid -- self-contained, no shared include.
+env_water.GLSL_HEADER("water_wake.glsl")
+
+# FFT ocean spectrum layer -- each shader is self-contained (its own Params
+# block), no shared _inc.glsl, so no extra Depends() needed.
+for _glsl in ("water_spectrum_init.glsl", "water_spectrum_evolve.glsl", "water_fft.glsl"):
+    env_water.GLSL_HEADER(_glsl)
+
+# Blit-to-texture, foam, shore foam and swash passes -- also self-contained.
+for _glsl in (
+    "water_blit_ripple.glsl",
+    "water_blit_ocean.glsl",
+    "water_foam.glsl",
+    "water_shore_foam.glsl",
+    "water_swash.glsl",
+):
+    env_water.GLSL_HEADER(_glsl)
+
+# Light-space caustic map -- a real RD graphics (vertex+fragment) pipeline,
+# not a SubViewport (see the shader's own header for why).
+env_water.GLSL_HEADER("water_caustics_map.glsl")
+
+env_water.add_source_files(env.modules_sources, "*.cpp")

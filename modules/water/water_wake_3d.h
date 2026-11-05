@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_water_wake_3d.h                                                 */
+/*  water_wake_3d.h                                                 */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -37,11 +37,11 @@
 #include "scene/resources/mesh.h"
 #include "scene/resources/texture_rd.h"
 
-class PhysXWaterSurface3D;
+class WaterBody3D;
 class RigidBody3D;
 class Texture2DRD;
 
-// A wake that travels with its parent RigidBody3D on a PhysXWaterSurface3D:
+// A wake that travels with its parent RigidBody3D on a WaterBody3D:
 // a small ripple simulation centered on the body that the hull pushes down as
 // it moves (a row of dips along its keel, deeper with speed), out on open
 // water past the surface's simulated square. The grid stays fixed to the
@@ -50,17 +50,17 @@ class Texture2DRD;
 // surface's material and included in its sample_height(), so other floating
 // bodies ride it -- everywhere there's water, the shore ripple grid
 // included; shore_grid_fade fades it out over that grid instead, for water
-// where the body's PhysXBuoyancy3D ripples (disturb_water) drive it.
-class PhysXWaterWake3D : public Node3D {
-	GDCLASS(PhysXWaterWake3D, Node3D);
+// where the body's WaterBuoyancy3D ripples (disturb_water) drive it.
+class WaterWake3D : public Node3D {
+	GDCLASS(WaterWake3D, Node3D);
 
-	NodePath water_surface_path; // empty = the sibling PhysXBuoyancy3D's
+	NodePath water_surface_path; // empty = the sibling WaterBuoyancy3D's
 	float size = 48.0f;
 	int cells = 192;
 	float wave_speed = 2.2f;
 	float damping = 0.25f;
 	float border_damping = 8.0f;
-	float hull_length = 0.0f; // 0 = from the sibling PhysXBuoyancy3D's sample points
+	float hull_length = 0.0f; // 0 = from the sibling WaterBuoyancy3D's sample points
 	float hull_beam = 0.0f;
 	PackedFloat32Array hull_profile; // 8 half-beam fractions bow -> stern (empty = a box): a tapered hull's foam + dip
 	int source_count = 5;
@@ -69,7 +69,7 @@ class PhysXWaterWake3D : public Node3D {
 	float reference_speed = 6.0f;
 	float shore_grid_fade = 0.0f;
 	float bow_foam = 8.0f; // foam churned in per second along the hull's sides at the bow, at reference_speed
-	float propeller_foam = 1.0f; // per second at full throttle (needs a sibling PhysXBoat3D)
+	float propeller_foam = 1.0f; // per second at full throttle (needs a sibling WaterBoat3D)
 	float foam_persistence = 4.0f;
 	float foam_slope = 0.08f;
 	float foam_slope_gain = 4.0f;
@@ -94,7 +94,7 @@ protected:
 
 public:
 	RigidBody3D *get_body() const;
-	PhysXWaterSurface3D *get_water_surface() const;
+	WaterBody3D *get_water_surface() const;
 
 	void set_water_surface_path(const NodePath &p_path);
 	NodePath get_water_surface_path() const { return water_surface_path; }
@@ -156,5 +156,5 @@ public:
 
 	PackedStringArray get_configuration_warnings() const override;
 
-	~PhysXWaterWake3D();
+	~WaterWake3D();
 };

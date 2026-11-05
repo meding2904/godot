@@ -1,0 +1,25 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/checklist.gd" id="1_check"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+
+[sub_resource type="Sky" id="Sky_main"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[node name="Checklist" type="Node3D"]
+
+[node name="WaterBody3D" type="WaterBody3D" parent="."]
+render_extent = 400.0
+ocean_domain_size = Vector2(40, 40)
+ocean_grid_resolution = 64
+grid_resolution = 96
+wind_speed = 10.0
+wave_amplitude = 1.2
+choppiness = 1.1
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6, 30)
+
+[node name="Check" type="Node3D" parent="."]
+script = ExtResource("1_check")

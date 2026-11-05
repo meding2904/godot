@@ -1,7 +1,7 @@
 #[compute]
 #version 450
 
-// Moving wake grid (PhysXWaterWake3D): a small ripple simulation that
+// Moving wake grid (WaterWake3D): a small ripple simulation that
 // travels with a boat. The grid is fixed to the water, not the boat: when
 // the boat has moved whole cells, each step reads its state from `shift`
 // cells over (the window slides; the waves stay where they were made), with

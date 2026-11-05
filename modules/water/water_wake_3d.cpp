@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_water_wake_3d.cpp                                               */
+/*  water_wake_3d.cpp                                               */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,64 +28,64 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "physx_water_wake_3d.h"
+#include "water_wake_3d.h"
 
-#include "physx_boat_3d.h"
-#include "physx_buoyancy_3d.h"
-#include "physx_water_surface_3d.h"
+#include "water_boat_3d.h"
+#include "water_buoyancy_3d.h"
+#include "water_body_3d.h"
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "scene/3d/physics/rigid_body_3d.h"
 #include "scene/resources/texture_rd.h"
 
-void PhysXWaterWake3D::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("set_water_surface_path", "path"), &PhysXWaterWake3D::set_water_surface_path);
-	ClassDB::bind_method(D_METHOD("get_water_surface_path"), &PhysXWaterWake3D::get_water_surface_path);
-	ClassDB::bind_method(D_METHOD("set_size", "size"), &PhysXWaterWake3D::set_size);
-	ClassDB::bind_method(D_METHOD("get_size"), &PhysXWaterWake3D::get_size);
-	ClassDB::bind_method(D_METHOD("set_cells", "cells"), &PhysXWaterWake3D::set_cells);
-	ClassDB::bind_method(D_METHOD("get_cells"), &PhysXWaterWake3D::get_cells);
-	ClassDB::bind_method(D_METHOD("set_wave_speed", "speed"), &PhysXWaterWake3D::set_wave_speed);
-	ClassDB::bind_method(D_METHOD("get_wave_speed"), &PhysXWaterWake3D::get_wave_speed);
-	ClassDB::bind_method(D_METHOD("set_damping", "damping"), &PhysXWaterWake3D::set_damping);
-	ClassDB::bind_method(D_METHOD("get_damping"), &PhysXWaterWake3D::get_damping);
-	ClassDB::bind_method(D_METHOD("set_border_damping", "damping"), &PhysXWaterWake3D::set_border_damping);
-	ClassDB::bind_method(D_METHOD("get_border_damping"), &PhysXWaterWake3D::get_border_damping);
-	ClassDB::bind_method(D_METHOD("set_hull_length", "length"), &PhysXWaterWake3D::set_hull_length);
-	ClassDB::bind_method(D_METHOD("get_hull_length"), &PhysXWaterWake3D::get_hull_length);
-	ClassDB::bind_method(D_METHOD("set_hull_beam", "beam"), &PhysXWaterWake3D::set_hull_beam);
-	ClassDB::bind_method(D_METHOD("get_hull_beam"), &PhysXWaterWake3D::get_hull_beam);
-	ClassDB::bind_method(D_METHOD("set_hull_profile", "profile"), &PhysXWaterWake3D::set_hull_profile);
-	ClassDB::bind_method(D_METHOD("get_hull_profile"), &PhysXWaterWake3D::get_hull_profile);
-	ClassDB::bind_method(D_METHOD("set_source_count", "count"), &PhysXWaterWake3D::set_source_count);
-	ClassDB::bind_method(D_METHOD("get_source_count"), &PhysXWaterWake3D::get_source_count);
-	ClassDB::bind_method(D_METHOD("set_rest_depth", "depth"), &PhysXWaterWake3D::set_rest_depth);
-	ClassDB::bind_method(D_METHOD("get_rest_depth"), &PhysXWaterWake3D::get_rest_depth);
-	ClassDB::bind_method(D_METHOD("set_wake_depth", "depth"), &PhysXWaterWake3D::set_wake_depth);
-	ClassDB::bind_method(D_METHOD("get_wake_depth"), &PhysXWaterWake3D::get_wake_depth);
-	ClassDB::bind_method(D_METHOD("set_reference_speed", "speed"), &PhysXWaterWake3D::set_reference_speed);
-	ClassDB::bind_method(D_METHOD("get_reference_speed"), &PhysXWaterWake3D::get_reference_speed);
-	ClassDB::bind_method(D_METHOD("set_shore_grid_fade", "fade"), &PhysXWaterWake3D::set_shore_grid_fade);
-	ClassDB::bind_method(D_METHOD("get_shore_grid_fade"), &PhysXWaterWake3D::get_shore_grid_fade);
-	ClassDB::bind_method(D_METHOD("set_bow_foam", "foam"), &PhysXWaterWake3D::set_bow_foam);
-	ClassDB::bind_method(D_METHOD("get_bow_foam"), &PhysXWaterWake3D::get_bow_foam);
-	ClassDB::bind_method(D_METHOD("set_propeller_foam", "foam"), &PhysXWaterWake3D::set_propeller_foam);
-	ClassDB::bind_method(D_METHOD("get_propeller_foam"), &PhysXWaterWake3D::get_propeller_foam);
-	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXWaterWake3D::set_foam_persistence);
-	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXWaterWake3D::get_foam_persistence);
-	ClassDB::bind_method(D_METHOD("set_foam_slope", "slope"), &PhysXWaterWake3D::set_foam_slope);
-	ClassDB::bind_method(D_METHOD("get_foam_slope"), &PhysXWaterWake3D::get_foam_slope);
-	ClassDB::bind_method(D_METHOD("set_foam_slope_gain", "gain"), &PhysXWaterWake3D::set_foam_slope_gain);
-	ClassDB::bind_method(D_METHOD("get_foam_slope_gain"), &PhysXWaterWake3D::get_foam_slope_gain);
-	ClassDB::bind_method(D_METHOD("set_foam_spread", "speed"), &PhysXWaterWake3D::set_foam_spread);
-	ClassDB::bind_method(D_METHOD("get_foam_spread"), &PhysXWaterWake3D::get_foam_spread);
-	ClassDB::bind_method(D_METHOD("add_foam", "world_position", "radius", "amount_per_second", "drift"), &PhysXWaterWake3D::add_foam, DEFVAL(true));
-	ClassDB::bind_method(D_METHOD("sample_height", "world_pos"), &PhysXWaterWake3D::sample_height);
-	ClassDB::bind_method(D_METHOD("get_grid_origin"), &PhysXWaterWake3D::get_grid_origin);
-	ClassDB::bind_method(D_METHOD("get_height_texture"), &PhysXWaterWake3D::get_height_texture);
+void WaterWake3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_water_surface_path", "path"), &WaterWake3D::set_water_surface_path);
+	ClassDB::bind_method(D_METHOD("get_water_surface_path"), &WaterWake3D::get_water_surface_path);
+	ClassDB::bind_method(D_METHOD("set_size", "size"), &WaterWake3D::set_size);
+	ClassDB::bind_method(D_METHOD("get_size"), &WaterWake3D::get_size);
+	ClassDB::bind_method(D_METHOD("set_cells", "cells"), &WaterWake3D::set_cells);
+	ClassDB::bind_method(D_METHOD("get_cells"), &WaterWake3D::get_cells);
+	ClassDB::bind_method(D_METHOD("set_wave_speed", "speed"), &WaterWake3D::set_wave_speed);
+	ClassDB::bind_method(D_METHOD("get_wave_speed"), &WaterWake3D::get_wave_speed);
+	ClassDB::bind_method(D_METHOD("set_damping", "damping"), &WaterWake3D::set_damping);
+	ClassDB::bind_method(D_METHOD("get_damping"), &WaterWake3D::get_damping);
+	ClassDB::bind_method(D_METHOD("set_border_damping", "damping"), &WaterWake3D::set_border_damping);
+	ClassDB::bind_method(D_METHOD("get_border_damping"), &WaterWake3D::get_border_damping);
+	ClassDB::bind_method(D_METHOD("set_hull_length", "length"), &WaterWake3D::set_hull_length);
+	ClassDB::bind_method(D_METHOD("get_hull_length"), &WaterWake3D::get_hull_length);
+	ClassDB::bind_method(D_METHOD("set_hull_beam", "beam"), &WaterWake3D::set_hull_beam);
+	ClassDB::bind_method(D_METHOD("get_hull_beam"), &WaterWake3D::get_hull_beam);
+	ClassDB::bind_method(D_METHOD("set_hull_profile", "profile"), &WaterWake3D::set_hull_profile);
+	ClassDB::bind_method(D_METHOD("get_hull_profile"), &WaterWake3D::get_hull_profile);
+	ClassDB::bind_method(D_METHOD("set_source_count", "count"), &WaterWake3D::set_source_count);
+	ClassDB::bind_method(D_METHOD("get_source_count"), &WaterWake3D::get_source_count);
+	ClassDB::bind_method(D_METHOD("set_rest_depth", "depth"), &WaterWake3D::set_rest_depth);
+	ClassDB::bind_method(D_METHOD("get_rest_depth"), &WaterWake3D::get_rest_depth);
+	ClassDB::bind_method(D_METHOD("set_wake_depth", "depth"), &WaterWake3D::set_wake_depth);
+	ClassDB::bind_method(D_METHOD("get_wake_depth"), &WaterWake3D::get_wake_depth);
+	ClassDB::bind_method(D_METHOD("set_reference_speed", "speed"), &WaterWake3D::set_reference_speed);
+	ClassDB::bind_method(D_METHOD("get_reference_speed"), &WaterWake3D::get_reference_speed);
+	ClassDB::bind_method(D_METHOD("set_shore_grid_fade", "fade"), &WaterWake3D::set_shore_grid_fade);
+	ClassDB::bind_method(D_METHOD("get_shore_grid_fade"), &WaterWake3D::get_shore_grid_fade);
+	ClassDB::bind_method(D_METHOD("set_bow_foam", "foam"), &WaterWake3D::set_bow_foam);
+	ClassDB::bind_method(D_METHOD("get_bow_foam"), &WaterWake3D::get_bow_foam);
+	ClassDB::bind_method(D_METHOD("set_propeller_foam", "foam"), &WaterWake3D::set_propeller_foam);
+	ClassDB::bind_method(D_METHOD("get_propeller_foam"), &WaterWake3D::get_propeller_foam);
+	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &WaterWake3D::set_foam_persistence);
+	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &WaterWake3D::get_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_foam_slope", "slope"), &WaterWake3D::set_foam_slope);
+	ClassDB::bind_method(D_METHOD("get_foam_slope"), &WaterWake3D::get_foam_slope);
+	ClassDB::bind_method(D_METHOD("set_foam_slope_gain", "gain"), &WaterWake3D::set_foam_slope_gain);
+	ClassDB::bind_method(D_METHOD("get_foam_slope_gain"), &WaterWake3D::get_foam_slope_gain);
+	ClassDB::bind_method(D_METHOD("set_foam_spread", "speed"), &WaterWake3D::set_foam_spread);
+	ClassDB::bind_method(D_METHOD("get_foam_spread"), &WaterWake3D::get_foam_spread);
+	ClassDB::bind_method(D_METHOD("add_foam", "world_position", "radius", "amount_per_second", "drift"), &WaterWake3D::add_foam, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("sample_height", "world_pos"), &WaterWake3D::sample_height);
+	ClassDB::bind_method(D_METHOD("get_grid_origin"), &WaterWake3D::get_grid_origin);
+	ClassDB::bind_method(D_METHOD("get_height_texture"), &WaterWake3D::get_height_texture);
 
-	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "water_surface_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D"), "set_water_surface_path", "get_water_surface_path");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "water_surface_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WaterBody3D"), "set_water_surface_path", "get_water_surface_path");
 	ADD_GROUP("Grid", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "size", PROPERTY_HINT_RANGE, "4,200,0.1,or_greater,suffix:m"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cells", PROPERTY_HINT_RANGE, "16,512,1"), "set_cells", "get_cells");
@@ -110,20 +110,20 @@ void PhysXWaterWake3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "reference_speed", PROPERTY_HINT_RANGE, "0.1,50,0.1,suffix:m/s"), "set_reference_speed", "get_reference_speed");
 }
 
-PhysXWaterWake3D::~PhysXWaterWake3D() {
+WaterWake3D::~WaterWake3D() {
 	_clear();
 }
 
-RigidBody3D *PhysXWaterWake3D::get_body() const {
+RigidBody3D *WaterWake3D::get_body() const {
 	return Object::cast_to<RigidBody3D>(get_parent());
 }
 
-PhysXWaterSurface3D *PhysXWaterWake3D::get_water_surface() const {
-	return ObjectDB::get_instance<PhysXWaterSurface3D>(water_id);
+WaterBody3D *WaterWake3D::get_water_surface() const {
+	return ObjectDB::get_instance<WaterBody3D>(water_id);
 }
 
-void PhysXWaterWake3D::_clear() {
-	PhysXWaterSurface3D *water = get_water_surface();
+void WaterWake3D::_clear() {
+	WaterBody3D *water = get_water_surface();
 	if (water != nullptr && slot >= 0) {
 		water->unregister_wake(slot);
 	}
@@ -139,21 +139,21 @@ void PhysXWaterWake3D::_clear() {
 	}
 }
 
-void PhysXWaterWake3D::_build() {
+void WaterWake3D::_build() {
 	_clear();
 	// The water: our own path, else the sibling buoyancy's.
-	PhysXWaterSurface3D *water = Object::cast_to<PhysXWaterSurface3D>(get_node_or_null(water_surface_path));
-	PhysXBuoyancy3D *buoyancy = nullptr;
+	WaterBody3D *water = Object::cast_to<WaterBody3D>(get_node_or_null(water_surface_path));
+	WaterBuoyancy3D *buoyancy = nullptr;
 	if (get_parent() != nullptr) {
 		for (int i = 0; i < get_parent()->get_child_count(); i++) {
-			buoyancy = Object::cast_to<PhysXBuoyancy3D>(get_parent()->get_child(i));
+			buoyancy = Object::cast_to<WaterBuoyancy3D>(get_parent()->get_child(i));
 			if (buoyancy != nullptr) {
 				break;
 			}
 		}
 	}
 	if (water == nullptr && buoyancy != nullptr) {
-		water = Object::cast_to<PhysXWaterSurface3D>(buoyancy->get_node_or_null(buoyancy->get_water_surface_path()));
+		water = Object::cast_to<WaterBody3D>(buoyancy->get_node_or_null(buoyancy->get_water_surface_path()));
 	}
 	water_id = water != nullptr ? water->get_instance_id() : ObjectID();
 	if (water == nullptr) {
@@ -187,12 +187,12 @@ void PhysXWaterWake3D::_build() {
 	height_texture->set_texture_rd_rid(solver->get_height_texture_rd_rid());
 	slot = water->register_wake(get_instance_id());
 	if (slot < 0) {
-		WARN_PRINT("PhysXWaterWake3D: the water surface already draws its maximum of 4 wakes; this one is simulated but not shown.");
+		WARN_PRINT("WaterWake3D: the water surface already draws its maximum of 4 wakes; this one is simulated but not shown.");
 	}
 }
 
 // The hull's half-beam fraction at `p_t` along it (0 bow, 1 stern) -- 1 with no profile (a box).
-float PhysXWaterWake3D::_profile_at(float p_t) const {
+float WaterWake3D::_profile_at(float p_t) const {
 	if (hull_profile.size() != 8) {
 		return 1.0f;
 	}
@@ -202,9 +202,9 @@ float PhysXWaterWake3D::_profile_at(float p_t) const {
 	return Math::lerp(hull_profile[i0], hull_profile[i1], u - (float)i0);
 }
 
-void PhysXWaterWake3D::_physics_step(double p_delta) {
+void WaterWake3D::_physics_step(double p_delta) {
 	RigidBody3D *body = get_body();
-	PhysXWaterSurface3D *water = get_water_surface();
+	WaterBody3D *water = get_water_surface();
 	if (body == nullptr || water == nullptr || solver == nullptr || !solver->is_built()) {
 		return;
 	}
@@ -232,9 +232,9 @@ void PhysXWaterWake3D::_physics_step(double p_delta) {
 		sources.push_back(s);
 	}
 	// Propeller wash: foam only, behind the propeller, with the thrust.
-	PhysXBoat3D *boat = nullptr;
+	WaterBoat3D *boat = nullptr;
 	for (int i = 0; i < body->get_child_count() && boat == nullptr; i++) {
-		boat = Object::cast_to<PhysXBoat3D>(body->get_child(i));
+		boat = Object::cast_to<WaterBoat3D>(body->get_child(i));
 	}
 	if (boat != nullptr && boat->get_max_thrust() > 0.0f && propeller_foam > 0.0f) {
 		const float churn = Math::abs(boat->get_applied_thrust()) / boat->get_max_thrust();
@@ -270,7 +270,7 @@ void PhysXWaterWake3D::_physics_step(double p_delta) {
 	}
 }
 
-void PhysXWaterWake3D::_notification(int p_what) {
+void WaterWake3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
@@ -291,7 +291,7 @@ void PhysXWaterWake3D::_notification(int p_what) {
 	}
 }
 
-void PhysXWaterWake3D::add_foam(const Vector3 &p_world_pos, float p_radius, float p_amount_per_second, bool p_drift) {
+void WaterWake3D::add_foam(const Vector3 &p_world_pos, float p_radius, float p_amount_per_second, bool p_drift) {
 	if (p_amount_per_second <= 0.0f || pending_foam.size() >= WaterWakeSolverGPU::MAX_SOURCES) {
 		return;
 	}
@@ -304,15 +304,15 @@ void PhysXWaterWake3D::add_foam(const Vector3 &p_world_pos, float p_radius, floa
 	pending_foam.push_back(s);
 }
 
-float PhysXWaterWake3D::sample_height(const Vector3 &p_world_pos) const {
+float WaterWake3D::sample_height(const Vector3 &p_world_pos) const {
 	return solver != nullptr ? solver->sample_height(Vector2(p_world_pos.x, p_world_pos.z)) : 0.0f;
 }
 
-Vector2 PhysXWaterWake3D::get_grid_origin() const {
+Vector2 WaterWake3D::get_grid_origin() const {
 	return solver != nullptr ? solver->get_origin() : Vector2();
 }
 
-void PhysXWaterWake3D::set_water_surface_path(const NodePath &p_path) {
+void WaterWake3D::set_water_surface_path(const NodePath &p_path) {
 	water_surface_path = p_path;
 	if (is_inside_tree() && !Engine::get_singleton()->is_editor_hint()) {
 		_clear();
@@ -321,7 +321,7 @@ void PhysXWaterWake3D::set_water_surface_path(const NodePath &p_path) {
 	update_configuration_warnings();
 }
 
-void PhysXWaterWake3D::set_size(float p_size) {
+void WaterWake3D::set_size(float p_size) {
 	size = MAX(p_size, 4.0f);
 	if (is_inside_tree() && !Engine::get_singleton()->is_editor_hint()) {
 		_clear();
@@ -329,7 +329,7 @@ void PhysXWaterWake3D::set_size(float p_size) {
 	}
 }
 
-void PhysXWaterWake3D::set_cells(int p_cells) {
+void WaterWake3D::set_cells(int p_cells) {
 	cells = CLAMP(p_cells, 16, 512);
 	if (is_inside_tree() && !Engine::get_singleton()->is_editor_hint()) {
 		_clear();
@@ -337,10 +337,10 @@ void PhysXWaterWake3D::set_cells(int p_cells) {
 	}
 }
 
-PackedStringArray PhysXWaterWake3D::get_configuration_warnings() const {
+PackedStringArray WaterWake3D::get_configuration_warnings() const {
 	PackedStringArray warnings = Node3D::get_configuration_warnings();
 	if (Object::cast_to<RigidBody3D>(get_parent()) == nullptr) {
-		warnings.push_back(RTR("PhysXWaterWake3D follows a RigidBody3D: make it a child of one (a boat or floater)."));
+		warnings.push_back(RTR("WaterWake3D follows a RigidBody3D: make it a child of one (a boat or floater)."));
 	}
 	return warnings;
 }

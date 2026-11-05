@@ -257,7 +257,7 @@ private:
 /* ===================================================================== */
 /*  WaterSolver -- CPU-side front. Preps payloads, posts render work.      */
 /*  Same public shape as Phase 1/2's original single-class WaterSolver,   */
-/*  so WaterRippleProbe/PhysXWaterSurface3D don't need to change how they */
+/*  so WaterRippleProbe/WaterBody3D don't need to change how they */
 /*  call it -- only the internals moved to the shared-device/async model. */
 /* ===================================================================== */
 class WaterSolver {

@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_water_spray_3d.cpp                                              */
+/*  water_spray_3d.cpp                                              */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,12 +28,12 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "physx_water_spray_3d.h"
+#include "water_spray_3d.h"
 
-#include "physx_boat_3d.h"
-#include "physx_buoyancy_3d.h"
-#include "physx_water_surface_3d.h"
-#include "physx_water_wake_3d.h"
+#include "water_boat_3d.h"
+#include "water_buoyancy_3d.h"
+#include "water_body_3d.h"
+#include "water_wake_3d.h"
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
@@ -42,48 +42,48 @@
 #include "scene/3d/physics/rigid_body_3d.h"
 #include "scene/resources/particle_process_material.h"
 
-void PhysXWaterSpray3D::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("set_water_surface_path", "path"), &PhysXWaterSpray3D::set_water_surface_path);
-	ClassDB::bind_method(D_METHOD("get_water_surface_path"), &PhysXWaterSpray3D::get_water_surface_path);
-	ClassDB::bind_method(D_METHOD("set_bow_emitters", "paths"), &PhysXWaterSpray3D::set_bow_emitters);
-	ClassDB::bind_method(D_METHOD("get_bow_emitters"), &PhysXWaterSpray3D::get_bow_emitters);
-	ClassDB::bind_method(D_METHOD("set_stern_emitters", "paths"), &PhysXWaterSpray3D::set_stern_emitters);
-	ClassDB::bind_method(D_METHOD("get_stern_emitters"), &PhysXWaterSpray3D::get_stern_emitters);
-	ClassDB::bind_method(D_METHOD("set_slam_emitters", "paths"), &PhysXWaterSpray3D::set_slam_emitters);
-	ClassDB::bind_method(D_METHOD("get_slam_emitters"), &PhysXWaterSpray3D::get_slam_emitters);
-	ClassDB::bind_method(D_METHOD("set_start_speed", "speed"), &PhysXWaterSpray3D::set_start_speed);
-	ClassDB::bind_method(D_METHOD("get_start_speed"), &PhysXWaterSpray3D::get_start_speed);
-	ClassDB::bind_method(D_METHOD("set_reference_speed", "speed"), &PhysXWaterSpray3D::set_reference_speed);
-	ClassDB::bind_method(D_METHOD("get_reference_speed"), &PhysXWaterSpray3D::get_reference_speed);
-	ClassDB::bind_method(D_METHOD("set_slow_velocity_scale", "scale"), &PhysXWaterSpray3D::set_slow_velocity_scale);
-	ClassDB::bind_method(D_METHOD("get_slow_velocity_scale"), &PhysXWaterSpray3D::get_slow_velocity_scale);
-	ClassDB::bind_method(D_METHOD("set_submerge_depth", "depth"), &PhysXWaterSpray3D::set_submerge_depth);
-	ClassDB::bind_method(D_METHOD("get_submerge_depth"), &PhysXWaterSpray3D::get_submerge_depth);
-	ClassDB::bind_method(D_METHOD("set_slam_speed", "speed"), &PhysXWaterSpray3D::set_slam_speed);
-	ClassDB::bind_method(D_METHOD("get_slam_speed"), &PhysXWaterSpray3D::get_slam_speed);
-	ClassDB::bind_method(D_METHOD("set_slam_full_speed", "speed"), &PhysXWaterSpray3D::set_slam_full_speed);
-	ClassDB::bind_method(D_METHOD("get_slam_full_speed"), &PhysXWaterSpray3D::get_slam_full_speed);
-	ClassDB::bind_method(D_METHOD("set_slam_cooldown", "seconds"), &PhysXWaterSpray3D::set_slam_cooldown);
-	ClassDB::bind_method(D_METHOD("get_slam_cooldown"), &PhysXWaterSpray3D::get_slam_cooldown);
-	ClassDB::bind_method(D_METHOD("set_water_collision", "enabled"), &PhysXWaterSpray3D::set_water_collision);
-	ClassDB::bind_method(D_METHOD("get_water_collision"), &PhysXWaterSpray3D::get_water_collision);
-	ClassDB::bind_method(D_METHOD("set_collision_size", "size"), &PhysXWaterSpray3D::set_collision_size);
-	ClassDB::bind_method(D_METHOD("get_collision_size"), &PhysXWaterSpray3D::get_collision_size);
-	ClassDB::bind_method(D_METHOD("set_collision_fit_radius", "radius"), &PhysXWaterSpray3D::set_collision_fit_radius);
-	ClassDB::bind_method(D_METHOD("get_collision_fit_radius"), &PhysXWaterSpray3D::get_collision_fit_radius);
-	ClassDB::bind_method(D_METHOD("set_collision_margin", "margin"), &PhysXWaterSpray3D::set_collision_margin);
-	ClassDB::bind_method(D_METHOD("get_collision_margin"), &PhysXWaterSpray3D::get_collision_margin);
-	ClassDB::bind_method(D_METHOD("set_collision_smoothing", "seconds"), &PhysXWaterSpray3D::set_collision_smoothing);
-	ClassDB::bind_method(D_METHOD("get_collision_smoothing"), &PhysXWaterSpray3D::get_collision_smoothing);
-	ClassDB::bind_method(D_METHOD("set_spray_foam", "foam"), &PhysXWaterSpray3D::set_spray_foam);
-	ClassDB::bind_method(D_METHOD("get_spray_foam"), &PhysXWaterSpray3D::get_spray_foam);
-	ClassDB::bind_method(D_METHOD("set_spray_foam_density", "density"), &PhysXWaterSpray3D::set_spray_foam_density);
-	ClassDB::bind_method(D_METHOD("get_spray_foam_density"), &PhysXWaterSpray3D::get_spray_foam_density);
-	ClassDB::bind_method(D_METHOD("set_spray_foam_offset", "offset"), &PhysXWaterSpray3D::set_spray_foam_offset);
-	ClassDB::bind_method(D_METHOD("get_spray_foam_offset"), &PhysXWaterSpray3D::get_spray_foam_offset);
+void WaterSpray3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_water_surface_path", "path"), &WaterSpray3D::set_water_surface_path);
+	ClassDB::bind_method(D_METHOD("get_water_surface_path"), &WaterSpray3D::get_water_surface_path);
+	ClassDB::bind_method(D_METHOD("set_bow_emitters", "paths"), &WaterSpray3D::set_bow_emitters);
+	ClassDB::bind_method(D_METHOD("get_bow_emitters"), &WaterSpray3D::get_bow_emitters);
+	ClassDB::bind_method(D_METHOD("set_stern_emitters", "paths"), &WaterSpray3D::set_stern_emitters);
+	ClassDB::bind_method(D_METHOD("get_stern_emitters"), &WaterSpray3D::get_stern_emitters);
+	ClassDB::bind_method(D_METHOD("set_slam_emitters", "paths"), &WaterSpray3D::set_slam_emitters);
+	ClassDB::bind_method(D_METHOD("get_slam_emitters"), &WaterSpray3D::get_slam_emitters);
+	ClassDB::bind_method(D_METHOD("set_start_speed", "speed"), &WaterSpray3D::set_start_speed);
+	ClassDB::bind_method(D_METHOD("get_start_speed"), &WaterSpray3D::get_start_speed);
+	ClassDB::bind_method(D_METHOD("set_reference_speed", "speed"), &WaterSpray3D::set_reference_speed);
+	ClassDB::bind_method(D_METHOD("get_reference_speed"), &WaterSpray3D::get_reference_speed);
+	ClassDB::bind_method(D_METHOD("set_slow_velocity_scale", "scale"), &WaterSpray3D::set_slow_velocity_scale);
+	ClassDB::bind_method(D_METHOD("get_slow_velocity_scale"), &WaterSpray3D::get_slow_velocity_scale);
+	ClassDB::bind_method(D_METHOD("set_submerge_depth", "depth"), &WaterSpray3D::set_submerge_depth);
+	ClassDB::bind_method(D_METHOD("get_submerge_depth"), &WaterSpray3D::get_submerge_depth);
+	ClassDB::bind_method(D_METHOD("set_slam_speed", "speed"), &WaterSpray3D::set_slam_speed);
+	ClassDB::bind_method(D_METHOD("get_slam_speed"), &WaterSpray3D::get_slam_speed);
+	ClassDB::bind_method(D_METHOD("set_slam_full_speed", "speed"), &WaterSpray3D::set_slam_full_speed);
+	ClassDB::bind_method(D_METHOD("get_slam_full_speed"), &WaterSpray3D::get_slam_full_speed);
+	ClassDB::bind_method(D_METHOD("set_slam_cooldown", "seconds"), &WaterSpray3D::set_slam_cooldown);
+	ClassDB::bind_method(D_METHOD("get_slam_cooldown"), &WaterSpray3D::get_slam_cooldown);
+	ClassDB::bind_method(D_METHOD("set_water_collision", "enabled"), &WaterSpray3D::set_water_collision);
+	ClassDB::bind_method(D_METHOD("get_water_collision"), &WaterSpray3D::get_water_collision);
+	ClassDB::bind_method(D_METHOD("set_collision_size", "size"), &WaterSpray3D::set_collision_size);
+	ClassDB::bind_method(D_METHOD("get_collision_size"), &WaterSpray3D::get_collision_size);
+	ClassDB::bind_method(D_METHOD("set_collision_fit_radius", "radius"), &WaterSpray3D::set_collision_fit_radius);
+	ClassDB::bind_method(D_METHOD("get_collision_fit_radius"), &WaterSpray3D::get_collision_fit_radius);
+	ClassDB::bind_method(D_METHOD("set_collision_margin", "margin"), &WaterSpray3D::set_collision_margin);
+	ClassDB::bind_method(D_METHOD("get_collision_margin"), &WaterSpray3D::get_collision_margin);
+	ClassDB::bind_method(D_METHOD("set_collision_smoothing", "seconds"), &WaterSpray3D::set_collision_smoothing);
+	ClassDB::bind_method(D_METHOD("get_collision_smoothing"), &WaterSpray3D::get_collision_smoothing);
+	ClassDB::bind_method(D_METHOD("set_spray_foam", "foam"), &WaterSpray3D::set_spray_foam);
+	ClassDB::bind_method(D_METHOD("get_spray_foam"), &WaterSpray3D::get_spray_foam);
+	ClassDB::bind_method(D_METHOD("set_spray_foam_density", "density"), &WaterSpray3D::set_spray_foam_density);
+	ClassDB::bind_method(D_METHOD("get_spray_foam_density"), &WaterSpray3D::get_spray_foam_density);
+	ClassDB::bind_method(D_METHOD("set_spray_foam_offset", "offset"), &WaterSpray3D::set_spray_foam_offset);
+	ClassDB::bind_method(D_METHOD("get_spray_foam_offset"), &WaterSpray3D::get_spray_foam_offset);
 
 	const String emitter_list_hint = vformat("%d/%d:%s", Variant::NODE_PATH, PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GPUParticles3D");
-	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "water_surface_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D"), "set_water_surface_path", "get_water_surface_path");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "water_surface_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WaterBody3D"), "set_water_surface_path", "get_water_surface_path");
 	ADD_GROUP("Emitters", "");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "bow_emitters", PROPERTY_HINT_TYPE_STRING, emitter_list_hint), "set_bow_emitters", "get_bow_emitters");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "stern_emitters", PROPERTY_HINT_TYPE_STRING, emitter_list_hint), "set_stern_emitters", "get_stern_emitters");
@@ -111,22 +111,22 @@ void PhysXWaterSpray3D::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("slammed", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "speed")));
 }
 
-RigidBody3D *PhysXWaterSpray3D::get_body() const {
+RigidBody3D *WaterSpray3D::get_body() const {
 	return Object::cast_to<RigidBody3D>(get_parent());
 }
 
-PhysXWaterSurface3D *PhysXWaterSpray3D::get_water_surface() const {
-	return ObjectDB::get_instance<PhysXWaterSurface3D>(water_id);
+WaterBody3D *WaterSpray3D::get_water_surface() const {
+	return ObjectDB::get_instance<WaterBody3D>(water_id);
 }
 
-void PhysXWaterSpray3D::_clear() {
+void WaterSpray3D::_clear() {
 	emitters.clear();
 	water_id = ObjectID();
 	wake_id = ObjectID();
 	built = false;
 }
 
-void PhysXWaterSpray3D::_add_emitters(const TypedArray<NodePath> &p_paths, Role p_role) {
+void WaterSpray3D::_add_emitters(const TypedArray<NodePath> &p_paths, Role p_role) {
 	const Transform3D to_body = get_body()->get_global_transform().affine_inverse();
 	for (int i = 0; i < p_paths.size(); i++) {
 		GPUParticles3D *particles = Object::cast_to<GPUParticles3D>(get_node_or_null(p_paths[i]));
@@ -193,7 +193,7 @@ void PhysXWaterSpray3D::_add_emitters(const TypedArray<NodePath> &p_paths, Role 
 	}
 }
 
-void PhysXWaterSpray3D::_build() {
+void WaterSpray3D::_build() {
 	_clear();
 	built = true; // tried: not again every tick when there's no water
 	RigidBody3D *body = get_body();
@@ -201,14 +201,14 @@ void PhysXWaterSpray3D::_build() {
 		return;
 	}
 	// The water: our own path, else the sibling buoyancy's.
-	PhysXWaterSurface3D *water = Object::cast_to<PhysXWaterSurface3D>(get_node_or_null(water_surface_path));
+	WaterBody3D *water = Object::cast_to<WaterBody3D>(get_node_or_null(water_surface_path));
 	for (int i = 0; i < body->get_child_count(); i++) {
 		Node *sibling = body->get_child(i);
-		PhysXBuoyancy3D *buoyancy = Object::cast_to<PhysXBuoyancy3D>(sibling);
+		WaterBuoyancy3D *buoyancy = Object::cast_to<WaterBuoyancy3D>(sibling);
 		if (water == nullptr && buoyancy != nullptr) {
-			water = Object::cast_to<PhysXWaterSurface3D>(buoyancy->get_node_or_null(buoyancy->get_water_surface_path()));
+			water = Object::cast_to<WaterBody3D>(buoyancy->get_node_or_null(buoyancy->get_water_surface_path()));
 		}
-		if (Object::cast_to<PhysXWaterWake3D>(sibling) != nullptr) {
+		if (Object::cast_to<WaterWake3D>(sibling) != nullptr) {
 			wake_id = sibling->get_instance_id();
 		}
 	}
@@ -221,7 +221,7 @@ void PhysXWaterSpray3D::_build() {
 	_add_emitters(slam_emitters, ROLE_SLAM);
 }
 
-void PhysXWaterSpray3D::_update_collider(const PhysXWaterSurface3D *p_water, const Vector3 &p_center, const Basis &p_level, double p_delta) {
+void WaterSpray3D::_update_collider(const WaterBody3D *p_water, const Vector3 &p_center, const Basis &p_level, double p_delta) {
 	have_plane = false;
 	if (collider == nullptr || !water_collision) {
 		return;
@@ -281,8 +281,8 @@ void PhysXWaterSpray3D::_update_collider(const PhysXWaterSurface3D *p_water, con
 	have_collider_xform = true;
 }
 
-void PhysXWaterSpray3D::_deposit_foam(const Emitter &p_emitter, const GPUParticles3D *p_particles, const Vector3 &p_body_velocity, float p_ratio, float p_velocity_scale, double p_delta) {
-	PhysXWaterWake3D *wake = ObjectDB::get_instance<PhysXWaterWake3D>(wake_id);
+void WaterSpray3D::_deposit_foam(const Emitter &p_emitter, const GPUParticles3D *p_particles, const Vector3 &p_body_velocity, float p_ratio, float p_velocity_scale, double p_delta) {
+	WaterWake3D *wake = ObjectDB::get_instance<WaterWake3D>(wake_id);
 	if (wake == nullptr || spray_foam <= 0.0f || p_ratio <= 0.001f || p_emitter.launch_points.is_empty()) {
 		return;
 	}
@@ -326,9 +326,9 @@ void PhysXWaterSpray3D::_deposit_foam(const Emitter &p_emitter, const GPUParticl
 	}
 }
 
-void PhysXWaterSpray3D::_physics_step(double p_delta) {
+void WaterSpray3D::_physics_step(double p_delta) {
 	RigidBody3D *body = get_body();
-	PhysXWaterSurface3D *water = get_water_surface();
+	WaterBody3D *water = get_water_surface();
 	if (body == nullptr || water == nullptr || emitters.is_empty() || p_delta <= 0.0) {
 		return;
 	}
@@ -347,10 +347,10 @@ void PhysXWaterSpray3D::_physics_step(double p_delta) {
 	const float bow_velocity = Math::lerp(slow_velocity_scale, 1.0f, MIN(forward_speed / reference_speed, 1.0f));
 	_update_collider(water, xf.origin, level, p_delta);
 
-	// Propeller churn, from a sibling PhysXBoat3D.
+	// Propeller churn, from a sibling WaterBoat3D.
 	float churn = 0.0f;
 	for (int i = 0; i < body->get_child_count(); i++) {
-		const PhysXBoat3D *boat = Object::cast_to<PhysXBoat3D>(body->get_child(i));
+		const WaterBoat3D *boat = Object::cast_to<WaterBoat3D>(body->get_child(i));
 		if (boat != nullptr && boat->get_max_thrust() > 0.0f) {
 			churn = MIN(Math::abs(boat->get_applied_thrust()) / boat->get_max_thrust(), 1.0f);
 			break;
@@ -419,7 +419,7 @@ void PhysXWaterSpray3D::_physics_step(double p_delta) {
 					e.cooldown = slam_cooldown;
 					emit_signal(SNAME("slammed"), Vector3(hull.x, surface, hull.z), closing);
 					// The splash leaves a patch of foam.
-					PhysXWaterWake3D *wake = ObjectDB::get_instance<PhysXWaterWake3D>(wake_id);
+					WaterWake3D *wake = ObjectDB::get_instance<WaterWake3D>(wake_id);
 					if (wake != nullptr && spray_foam > 0.0f) {
 						wake->add_foam(Vector3(hull.x, surface, hull.z), 1.2f, strength / (float)p_delta);
 					}
@@ -441,7 +441,7 @@ void PhysXWaterSpray3D::_physics_step(double p_delta) {
 	}
 }
 
-void PhysXWaterSpray3D::_notification(int p_what) {
+void WaterSpray3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
@@ -477,41 +477,41 @@ void PhysXWaterSpray3D::_notification(int p_what) {
 	}
 }
 
-void PhysXWaterSpray3D::set_water_surface_path(const NodePath &p_path) {
+void WaterSpray3D::set_water_surface_path(const NodePath &p_path) {
 	water_surface_path = p_path;
 	built = false;
 	update_configuration_warnings();
 }
 
-void PhysXWaterSpray3D::set_water_collision(bool p_enabled) {
+void WaterSpray3D::set_water_collision(bool p_enabled) {
 	water_collision = p_enabled;
 	if (collider != nullptr && !water_collision) {
 		collider->set_visible(false);
 	}
 }
 
-void PhysXWaterSpray3D::set_bow_emitters(const TypedArray<NodePath> &p_paths) {
+void WaterSpray3D::set_bow_emitters(const TypedArray<NodePath> &p_paths) {
 	bow_emitters = p_paths;
 	built = false;
 	update_configuration_warnings();
 }
 
-void PhysXWaterSpray3D::set_stern_emitters(const TypedArray<NodePath> &p_paths) {
+void WaterSpray3D::set_stern_emitters(const TypedArray<NodePath> &p_paths) {
 	stern_emitters = p_paths;
 	built = false;
 	update_configuration_warnings();
 }
 
-void PhysXWaterSpray3D::set_slam_emitters(const TypedArray<NodePath> &p_paths) {
+void WaterSpray3D::set_slam_emitters(const TypedArray<NodePath> &p_paths) {
 	slam_emitters = p_paths;
 	built = false;
 	update_configuration_warnings();
 }
 
-PackedStringArray PhysXWaterSpray3D::get_configuration_warnings() const {
+PackedStringArray WaterSpray3D::get_configuration_warnings() const {
 	PackedStringArray warnings = Node3D::get_configuration_warnings();
 	if (Object::cast_to<RigidBody3D>(get_parent()) == nullptr) {
-		warnings.push_back(RTR("PhysXWaterSpray3D follows a RigidBody3D: make it a child of one (a boat)."));
+		warnings.push_back(RTR("WaterSpray3D follows a RigidBody3D: make it a child of one (a boat)."));
 	}
 	if (bow_emitters.is_empty() && stern_emitters.is_empty() && slam_emitters.is_empty()) {
 		warnings.push_back(RTR("No emitters: add GPUParticles3D nodes to bow_emitters, stern_emitters or slam_emitters."));

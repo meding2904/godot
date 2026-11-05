@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_water_spray_3d.h                                                */
+/*  water_spray_3d.h                                                */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -36,17 +36,17 @@
 class GPUParticles3D;
 class GPUParticlesCollisionBox3D;
 class ParticleProcessMaterial;
-class PhysXWaterSurface3D;
+class WaterBody3D;
 class RigidBody3D;
 
-// Spray thrown up by a hull moving through a PhysXWaterSurface3D, drawn by
+// Spray thrown up by a hull moving through a WaterBody3D, drawn by
 // ordinary GPUParticles3D nodes authored in the editor -- this node only
 // drives them from the body's motion. Make it a child of the RigidBody3D
 // (a boat) and point its emitter lists at GPUParticles3D nodes:
 // - bow_emitters spray while the hull moves through the water: rate and
 //   launch speed rise with forward speed, none where the hull is out of the
 //   water.
-// - stern_emitters spray with a sibling PhysXBoat3D's propeller thrust.
+// - stern_emitters spray with a sibling WaterBoat3D's propeller thrust.
 // - slam_emitters fire once (restart) when the hull drops back onto the
 //   water fast enough, scaled with the impact.
 // Every tick the emitters are moved to the water surface under where they
@@ -63,10 +63,10 @@ class RigidBody3D;
 // With spray_foam, the spray leaves foam where it lands: each tick the
 // landing spots are worked out from the emitters' launch points, speeds and
 // gravity, and specks of foam are scattered along where the spray lands and
-// skids (spray_foam_offset further out), on the sibling PhysXWaterWake3D --
+// skids (spray_foam_offset further out), on the sibling WaterWake3D --
 // water stirred by droplets, not churned solid (a slam leaves a patch).
-class PhysXWaterSpray3D : public Node3D {
-	GDCLASS(PhysXWaterSpray3D, Node3D);
+class WaterSpray3D : public Node3D {
+	GDCLASS(WaterSpray3D, Node3D);
 
 public:
 	enum Role {
@@ -97,7 +97,7 @@ private:
 		float friction = 0.0f; // its collision friction: how far landed spray skids
 	};
 
-	NodePath water_surface_path; // empty = the sibling PhysXBuoyancy3D's
+	NodePath water_surface_path; // empty = the sibling WaterBuoyancy3D's
 	TypedArray<NodePath> bow_emitters;
 	TypedArray<NodePath> stern_emitters;
 	TypedArray<NodePath> slam_emitters;
@@ -131,14 +131,14 @@ private:
 	float smooth_height = 0.0f;
 	Vector3 smooth_normal;
 	ObjectID water_id;
-	ObjectID wake_id; // the sibling PhysXWaterWake3D: the hull's own wake isn't water it clears
+	ObjectID wake_id; // the sibling WaterWake3D: the hull's own wake isn't water it clears
 	bool built = false;
 
 	void _build();
 	void _clear();
 	void _physics_step(double p_delta);
 	void _add_emitters(const TypedArray<NodePath> &p_paths, Role p_role);
-	void _update_collider(const PhysXWaterSurface3D *p_water, const Vector3 &p_center, const Basis &p_level, double p_delta);
+	void _update_collider(const WaterBody3D *p_water, const Vector3 &p_center, const Basis &p_level, double p_delta);
 	void _deposit_foam(const Emitter &p_emitter, const GPUParticles3D *p_particles, const Vector3 &p_body_velocity, float p_ratio, float p_velocity_scale, double p_delta);
 	RandomPCG rng;
 
@@ -148,7 +148,7 @@ protected:
 
 public:
 	RigidBody3D *get_body() const;
-	PhysXWaterSurface3D *get_water_surface() const;
+	WaterBody3D *get_water_surface() const;
 
 	void set_water_surface_path(const NodePath &p_path);
 	NodePath get_water_surface_path() const { return water_surface_path; }

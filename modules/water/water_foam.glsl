@@ -29,7 +29,7 @@ void main() {
 		return;
 	}
 	// Same displacement sign and Jacobian as the materials (see
-	// PhysXWaterSurface3D's built-in shader).
+	// WaterBody3D's built-in shader).
 	float s = -foam_params.y;
 	vec4 der = imageLoad(deriv_tex, c);
 	float dxz = imageLoad(disp_tex, c).b;

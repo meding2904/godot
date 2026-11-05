@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_boat_3d.cpp                                                     */
+/*  water_boat_3d.cpp                                                     */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,39 +28,39 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "physx_boat_3d.h"
+#include "water_boat_3d.h"
 
-#include "physx_buoyancy_3d.h"
+#include "water_buoyancy_3d.h"
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "scene/3d/physics/rigid_body_3d.h"
 
-void PhysXBoat3D::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("set_throttle", "throttle"), &PhysXBoat3D::set_throttle);
-	ClassDB::bind_method(D_METHOD("get_throttle"), &PhysXBoat3D::get_throttle);
-	ClassDB::bind_method(D_METHOD("set_steering", "steering"), &PhysXBoat3D::set_steering);
-	ClassDB::bind_method(D_METHOD("get_steering"), &PhysXBoat3D::get_steering);
-	ClassDB::bind_method(D_METHOD("set_max_thrust", "thrust"), &PhysXBoat3D::set_max_thrust);
-	ClassDB::bind_method(D_METHOD("get_max_thrust"), &PhysXBoat3D::get_max_thrust);
-	ClassDB::bind_method(D_METHOD("set_reverse_thrust_ratio", "ratio"), &PhysXBoat3D::set_reverse_thrust_ratio);
-	ClassDB::bind_method(D_METHOD("get_reverse_thrust_ratio"), &PhysXBoat3D::get_reverse_thrust_ratio);
-	ClassDB::bind_method(D_METHOD("set_max_steer_angle", "angle"), &PhysXBoat3D::set_max_steer_angle);
-	ClassDB::bind_method(D_METHOD("get_max_steer_angle"), &PhysXBoat3D::get_max_steer_angle);
-	ClassDB::bind_method(D_METHOD("set_propeller_position", "position"), &PhysXBoat3D::set_propeller_position);
-	ClassDB::bind_method(D_METHOD("get_propeller_position"), &PhysXBoat3D::get_propeller_position);
-	ClassDB::bind_method(D_METHOD("set_rudder_strength", "strength"), &PhysXBoat3D::set_rudder_strength);
-	ClassDB::bind_method(D_METHOD("get_rudder_strength"), &PhysXBoat3D::get_rudder_strength);
-	ClassDB::bind_method(D_METHOD("set_propeller_wash_speed", "speed"), &PhysXBoat3D::set_propeller_wash_speed);
-	ClassDB::bind_method(D_METHOD("get_propeller_wash_speed"), &PhysXBoat3D::get_propeller_wash_speed);
-	ClassDB::bind_method(D_METHOD("set_hull_drag", "drag"), &PhysXBoat3D::set_hull_drag);
-	ClassDB::bind_method(D_METHOD("get_hull_drag"), &PhysXBoat3D::get_hull_drag);
-	ClassDB::bind_method(D_METHOD("set_hull_linear_drag", "drag"), &PhysXBoat3D::set_hull_linear_drag);
-	ClassDB::bind_method(D_METHOD("get_hull_linear_drag"), &PhysXBoat3D::get_hull_linear_drag);
-	ClassDB::bind_method(D_METHOD("set_angular_damping", "damping"), &PhysXBoat3D::set_angular_damping);
-	ClassDB::bind_method(D_METHOD("get_angular_damping"), &PhysXBoat3D::get_angular_damping);
-	ClassDB::bind_method(D_METHOD("get_forward_speed"), &PhysXBoat3D::get_forward_speed);
-	ClassDB::bind_method(D_METHOD("get_applied_thrust"), &PhysXBoat3D::get_applied_thrust);
+void WaterBoat3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_throttle", "throttle"), &WaterBoat3D::set_throttle);
+	ClassDB::bind_method(D_METHOD("get_throttle"), &WaterBoat3D::get_throttle);
+	ClassDB::bind_method(D_METHOD("set_steering", "steering"), &WaterBoat3D::set_steering);
+	ClassDB::bind_method(D_METHOD("get_steering"), &WaterBoat3D::get_steering);
+	ClassDB::bind_method(D_METHOD("set_max_thrust", "thrust"), &WaterBoat3D::set_max_thrust);
+	ClassDB::bind_method(D_METHOD("get_max_thrust"), &WaterBoat3D::get_max_thrust);
+	ClassDB::bind_method(D_METHOD("set_reverse_thrust_ratio", "ratio"), &WaterBoat3D::set_reverse_thrust_ratio);
+	ClassDB::bind_method(D_METHOD("get_reverse_thrust_ratio"), &WaterBoat3D::get_reverse_thrust_ratio);
+	ClassDB::bind_method(D_METHOD("set_max_steer_angle", "angle"), &WaterBoat3D::set_max_steer_angle);
+	ClassDB::bind_method(D_METHOD("get_max_steer_angle"), &WaterBoat3D::get_max_steer_angle);
+	ClassDB::bind_method(D_METHOD("set_propeller_position", "position"), &WaterBoat3D::set_propeller_position);
+	ClassDB::bind_method(D_METHOD("get_propeller_position"), &WaterBoat3D::get_propeller_position);
+	ClassDB::bind_method(D_METHOD("set_rudder_strength", "strength"), &WaterBoat3D::set_rudder_strength);
+	ClassDB::bind_method(D_METHOD("get_rudder_strength"), &WaterBoat3D::get_rudder_strength);
+	ClassDB::bind_method(D_METHOD("set_propeller_wash_speed", "speed"), &WaterBoat3D::set_propeller_wash_speed);
+	ClassDB::bind_method(D_METHOD("get_propeller_wash_speed"), &WaterBoat3D::get_propeller_wash_speed);
+	ClassDB::bind_method(D_METHOD("set_hull_drag", "drag"), &WaterBoat3D::set_hull_drag);
+	ClassDB::bind_method(D_METHOD("get_hull_drag"), &WaterBoat3D::get_hull_drag);
+	ClassDB::bind_method(D_METHOD("set_hull_linear_drag", "drag"), &WaterBoat3D::set_hull_linear_drag);
+	ClassDB::bind_method(D_METHOD("get_hull_linear_drag"), &WaterBoat3D::get_hull_linear_drag);
+	ClassDB::bind_method(D_METHOD("set_angular_damping", "damping"), &WaterBoat3D::set_angular_damping);
+	ClassDB::bind_method(D_METHOD("get_angular_damping"), &WaterBoat3D::get_angular_damping);
+	ClassDB::bind_method(D_METHOD("get_forward_speed"), &WaterBoat3D::get_forward_speed);
+	ClassDB::bind_method(D_METHOD("get_applied_thrust"), &WaterBoat3D::get_applied_thrust);
 
 	ADD_GROUP("Control", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "throttle", PROPERTY_HINT_RANGE, "-1,1,0.01"), "set_throttle", "get_throttle");
@@ -78,15 +78,15 @@ void PhysXBoat3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "angular_damping"), "set_angular_damping", "get_angular_damping");
 }
 
-RigidBody3D *PhysXBoat3D::get_body() const {
+RigidBody3D *WaterBoat3D::get_body() const {
 	return Object::cast_to<RigidBody3D>(get_parent());
 }
 
-PhysXBuoyancy3D *PhysXBoat3D::get_buoyancy() const {
-	return ObjectDB::get_instance<PhysXBuoyancy3D>(buoyancy_id);
+WaterBuoyancy3D *WaterBoat3D::get_buoyancy() const {
+	return ObjectDB::get_instance<WaterBuoyancy3D>(buoyancy_id);
 }
 
-float PhysXBoat3D::get_forward_speed() const {
+float WaterBoat3D::get_forward_speed() const {
 	RigidBody3D *body = get_body();
 	if (body == nullptr) {
 		return 0.0f;
@@ -94,10 +94,10 @@ float PhysXBoat3D::get_forward_speed() const {
 	return body->get_linear_velocity().dot(body->get_global_transform().basis.get_column(2).normalized());
 }
 
-void PhysXBoat3D::_physics_step() {
+void WaterBoat3D::_physics_step() {
 	applied_thrust = 0.0f;
 	RigidBody3D *body = get_body();
-	PhysXBuoyancy3D *buoyancy = get_buoyancy();
+	WaterBuoyancy3D *buoyancy = get_buoyancy();
 	if (body == nullptr || buoyancy == nullptr) {
 		return;
 	}
@@ -178,13 +178,13 @@ void PhysXBoat3D::_physics_step() {
 	}
 }
 
-void PhysXBoat3D::_notification(int p_what) {
+void WaterBoat3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
 			buoyancy_id = ObjectID();
 			if (get_parent() != nullptr) {
 				for (int i = 0; i < get_parent()->get_child_count(); i++) {
-					PhysXBuoyancy3D *b = Object::cast_to<PhysXBuoyancy3D>(get_parent()->get_child(i));
+					WaterBuoyancy3D *b = Object::cast_to<WaterBuoyancy3D>(get_parent()->get_child(i));
 					if (b != nullptr) {
 						buoyancy_id = b->get_instance_id();
 						break;
@@ -201,18 +201,18 @@ void PhysXBoat3D::_notification(int p_what) {
 	}
 }
 
-PackedStringArray PhysXBoat3D::get_configuration_warnings() const {
+PackedStringArray WaterBoat3D::get_configuration_warnings() const {
 	PackedStringArray warnings = Node3D::get_configuration_warnings();
 	Node *parent = get_parent();
 	if (Object::cast_to<RigidBody3D>(parent) == nullptr) {
-		warnings.push_back(RTR("PhysXBoat3D drives a RigidBody3D: make it a child of one."));
+		warnings.push_back(RTR("WaterBoat3D drives a RigidBody3D: make it a child of one."));
 	} else {
 		bool found = false;
 		for (int i = 0; i < parent->get_child_count(); i++) {
-			found = found || Object::cast_to<PhysXBuoyancy3D>(parent->get_child(i)) != nullptr;
+			found = found || Object::cast_to<WaterBuoyancy3D>(parent->get_child(i)) != nullptr;
 		}
 		if (!found) {
-			warnings.push_back(RTR("Add a PhysXBuoyancy3D next to this node (another child of the same RigidBody3D) to float the boat."));
+			warnings.push_back(RTR("Add a WaterBuoyancy3D next to this node (another child of the same RigidBody3D) to float the boat."));
 		}
 	}
 	return warnings;
