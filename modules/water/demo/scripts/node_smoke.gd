@@ -40,7 +40,14 @@ func _process(_delta: float) -> bool:
 		_water.auto_recenter, _water.underwater_effect, internal_effect,
 	])
 	print("  compute=%s" % (RenderingServer.get_rendering_device() != null))
-	var ok := has_mesh and has_shader and internal_effect and _water.auto_recenter
+	# Every sampler must already be bound: no "missing texture" in the material.
+	var unbound: Array[String] = []
+	for slot in ["ripple_height_tex", "ocean_height_tex", "ocean_fade_tex", "shore_depth_tex",
+			"ocean_disp_tex", "ocean_deriv_tex", "ocean_foam_tex", "shore_foam_tex", "swash_tex", "detail_normal"]:
+		if material.get_shader_parameter(slot) == null:
+			unbound.append(slot)
+	print("  unbound textures=%s" % [unbound])
+	var ok := has_mesh and has_shader and internal_effect and _water.auto_recenter and unbound.is_empty()
 	print("RESULT: %s" % ("PASS" if ok else "FAIL"))
 	quit(0 if ok else 1)
 	return false

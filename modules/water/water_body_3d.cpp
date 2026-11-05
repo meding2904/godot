@@ -1291,12 +1291,41 @@ void WaterBody3D::_build_detail_normal() {
 	detail_normal_tex = ImageTexture::create_from_image(image);
 }
 
+// The built-in material's sampler slots are filled from the start: the
+// solver's zero-copy Texture2DRD bindings only exist once its RenderingDevice
+// work has started (a frame or two later, and never in the editor). Flat 1x1
+// stand-ins mean the node is self-contained -- no unbound sampler, no missing
+// texture in the inspector -- until _bind_textures() replaces them.
+void WaterBody3D::_bind_fallback_textures() {
+	if (water_material.is_null()) {
+		return;
+	}
+	if (fallback_black_tex.is_null()) {
+		Ref<Image> black = Image::create_empty(1, 1, false, Image::FORMAT_RGB8);
+		black->fill(Color(0, 0, 0));
+		fallback_black_tex = ImageTexture::create_from_image(black);
+		Ref<Image> white = Image::create_empty(1, 1, false, Image::FORMAT_RGB8);
+		white->fill(Color(1, 1, 1));
+		fallback_white_tex = ImageTexture::create_from_image(white);
+	}
+	water_material->set_shader_parameter("ripple_height_tex", fallback_black_tex);
+	water_material->set_shader_parameter("ocean_height_tex", fallback_black_tex);
+	water_material->set_shader_parameter("ocean_fade_tex", fallback_white_tex);
+	water_material->set_shader_parameter("shore_depth_tex", fallback_white_tex);
+	water_material->set_shader_parameter("ocean_disp_tex", fallback_black_tex);
+	water_material->set_shader_parameter("ocean_deriv_tex", fallback_black_tex);
+	water_material->set_shader_parameter("ocean_foam_tex", fallback_black_tex);
+	water_material->set_shader_parameter("shore_foam_tex", fallback_black_tex);
+	water_material->set_shader_parameter("swash_tex", fallback_black_tex);
+}
+
 void WaterBody3D::_apply_shading_settings() {
 	if (water_material.is_null()) {
 		return;
 	}
 	_build_detail_normal();
 	water_material->set_shader_parameter("detail_normal", detail_normal_tex);
+	_bind_fallback_textures();
 	if (quality != QUALITY_CUSTOM) {
 		water_material->set_shader_parameter("shading_quality", (int)quality);
 	}

@@ -363,6 +363,12 @@ private:
 	WaterUnderwaterEffect *underwater_effect_node = nullptr;
 	void _update_underwater_node();
 	Ref<ImageTexture> detail_normal_tex;
+	// Valid stand-ins for the solver's textures until the RenderingDevice ones
+	// appear: the material never references an unbound sampler, so the node is
+	// complete the moment it is added (and the editor shows the textures).
+	Ref<ImageTexture> fallback_black_tex;
+	Ref<ImageTexture> fallback_white_tex;
+	void _bind_fallback_textures();
 	void _apply_quality();
 	void _resolve_sun();
 	void _update_sun();
