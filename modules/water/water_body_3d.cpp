@@ -56,6 +56,7 @@
 #include "scene/resources/sky.h"
 #include "scene/resources/texture_rd.h"
 #include "servers/physics_3d/physics_server_3d.h"
+#include "servers/rendering/rendering_server.h"
 
 namespace {
 // A plain spatial Shader (Godot's own shading language, NOT the RD compute
@@ -126,11 +127,9 @@ uniform vec4 wake_rect_3 = vec4(0.0);
 // Mean surface height (node-relative), what the ripple layer settles back to
 // past the edge of its domain when the surface is rendered further out.
 uniform float water_level = 0.0;
-// Animation clock for the shore noise, set by WaterBody3D while the
-// game runs -- not the shader's built-in clock: a material that reads it makes
-// the editor redraw its 3D view every frame, and with a big scene open that
-// ate half of Play Scene's frame rate. In the editor this stays 0 (the water
-// is a static preview there anyway).
+// Animation clock for the shore noise, set by WaterBody3D -- not the shader's
+// built-in clock, so the editor preview and the running game share one clock
+// and it stops when the node stops stepping.
 uniform float water_time = 0.0;
 uniform vec4 water_color : source_color = vec4(0.09, 0.32, 0.42, 0.65);
 // Persistent whitecap foam (0..1) on the ocean grid, injected where the
@@ -1017,7 +1016,7 @@ void WaterBody3D::recenter(Vector3 p_world_position) {
 // The sea state changed: a built solver regenerates its spectrum IN PLACE (no rebuild -- the waves keep their phases,
 // ripples / wakes / foam survive: storms can ramp it); not built yet → the usual rebuild.
 void WaterBody3D::_reinit_spectrum() {
-	if (solver.is_available() && !Engine::get_singleton()->is_editor_hint()) {
+	if (solver.is_available()) {
 		solver.reinit_spectrum(wind_speed, wind_direction, wave_amplitude, get_effective_fetch());
 		return;
 	}
@@ -1293,9 +1292,9 @@ void WaterBody3D::_build_detail_normal() {
 
 // The built-in material's sampler slots are filled from the start: the
 // solver's zero-copy Texture2DRD bindings only exist once its RenderingDevice
-// work has started (a frame or two later, and never in the editor). Flat 1x1
-// stand-ins mean the node is self-contained -- no unbound sampler, no missing
-// texture in the inspector -- until _bind_textures() replaces them.
+// work has started (a frame or two later). Flat 1x1 stand-ins mean the node
+// is self-contained -- no unbound sampler, no missing texture in the
+// inspector -- until _bind_textures() replaces them.
 void WaterBody3D::_bind_fallback_textures() {
 	if (water_material.is_null()) {
 		return;
@@ -1347,8 +1346,8 @@ void WaterBody3D::set_underwater_effect(bool p_enabled) {
 }
 
 void WaterBody3D::_update_underwater_node() {
-	// Editor previews don't simulate; an underwater grade there would fight
-	// the editor camera.
+	// No underwater grade in the editor: the editor camera is a preview
+	// camera, not a swimmer, so grading its view would fight the user.
 	if (Engine::get_singleton()->is_editor_hint()) {
 		return;
 	}
@@ -1520,18 +1519,12 @@ void WaterBody3D::_rebuild() {
 	water_material->set_shader_parameter("choppiness", choppiness);
 	water_material->set_shader_parameter("per_pixel_normals", normal_mode == NORMAL_MODE_PER_PIXEL);
 
-	// NOTIFICATION_INTERNAL_PHYSICS_PROCESS fires in the editor too, not just
-	// Play -- same gotcha PhysXVehicle3D/PhysXDestructible3D already guard
-	// against (see PhysXVehicle3D::_build()'s own comment on it). Without
-	// this, just having the scene open dispatches real GPU compute work
-	// every physics tick, which is exactly what a user reported seeing (the
-	// water visibly animating while only hovering nodes in the editor,
-	// followed by an editor crash likely from the render-thread dispatch
-	// getting into an inconsistent state under the editor's non-realtime
-	// update loop). No solver setup at all in the editor -- the node shows
-	// a static flat mesh there instead, matching this class's own doc
-	// comment ("only runs in an actual running game").
-	if (Engine::get_singleton()->is_editor_hint()) {
+	// The editor previews the ocean too (see _update()): adding the node is
+	// the whole setup, in the editor and in Play alike. A Compatibility
+	// editor has no main RenderingDevice, so nothing can run and there is no
+	// RD texture its renderer could sample -- there the preview is the flat
+	// stand-in surface.
+	if (Engine::get_singleton()->is_editor_hint() && RenderingServer::get_singleton()->get_rendering_device() == nullptr) {
 		return;
 	}
 
@@ -1699,7 +1692,9 @@ void WaterBody3D::_update_mesh_offset() {
 }
 
 void WaterBody3D::_update(double p_delta) {
-	if (Engine::get_singleton()->is_editor_hint()) {
+	// Forward+/Mobile editors preview the ocean live; a Compatibility editor
+	// has no RenderingDevice to run it on (see _rebuild()).
+	if (Engine::get_singleton()->is_editor_hint() && RenderingServer::get_singleton()->get_rendering_device() == nullptr) {
 		return;
 	}
 	water_time += p_delta;
@@ -1723,7 +1718,7 @@ void WaterBody3D::_update(double p_delta) {
 		return;
 	}
 	solver.step(p_delta); // no-ops internally until solver.is_available() (see water_solver.cpp)
-	if (!textures_bound && solver.is_available()) {
+	if (!textures_bound && solver.is_available() && !solver.uses_local_device()) {
 		_bind_textures();
 	}
 	if (solver.is_available() && caustics_enabled) {

@@ -11,7 +11,7 @@
 		Set [member seabed_from_floor] for water over uneven ground -- a beach, a lake bed. The still-water depth of every ripple cell is then measured from the floor: waves travel at the local shallow-water speed, so they slow and bunch up over shallows, the shoreline falls wherever the ground rises above the water, and the ocean chop fades out over the last [member shallow_fade_depth] meters. Without it, the whole surface uses the constant [member depth].
 		[WaterWake3D] nodes on moving bodies draw their wakes and foam on the surface (up to four), and [method sample_height] includes them.
 		Both simulation grids are centered on the node's global position (plus the [member surface_mesh] footprint's center), fixed when the node enters the tree or a property changes. The node's rotation and scale are not applied to the simulation, so keep it unrotated and unscaled.
-		Only runs in an actual running game, never in the editor -- placing or moving the node in the Inspector does not simulate.
+		Adding the node is the whole setup: the waves run and are previewed in the editor too on Forward+/Mobile, and the first [DirectionalLight3D] and procedural sky in the scene are picked up automatically. A Compatibility editor (no main [RenderingDevice]) previews a flat still surface instead -- the only case where placing the node does not show waves.
 	</description>
 	<tutorials>
 	</tutorials>

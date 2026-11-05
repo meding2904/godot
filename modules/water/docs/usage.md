@@ -23,7 +23,8 @@ plus a camera already renders an ocean; the environment is for the rest of the
 scene. The defaults are an open sea: 128² solver grids,
 a 64 m ocean tile, `render_extent` 1000, the interactive ripple square follows
 the camera (`auto_recenter`), and diving grades the frame (`underwater_effect`,
-provided the scene has a `WorldEnvironment`). Add the node, hit play.
+provided the scene has a `WorldEnvironment`). Add the node: it runs the waves
+right there in the editor, and in Play.
 
 ```gdscript
 var water := WaterBody3D.new()
@@ -37,10 +38,10 @@ Limits worth knowing up front:
 
 - Keep the node **unrotated and unscaled**: the simulation ignores rotation
   and scale.
-- It only simulates in a running game, not in the editor.
 - It needs `RenderingDevice` compute (Forward+ or Mobile renderer). In
   Compatibility or headless it stays flat and `sample_height()` returns the
-  still-water level — a no-op, not an error.
+  still-water level — a no-op, not an error. Forward+/Mobile editors preview
+  the same waves live, with no setup.
 - The material is unshaded and alpha-blended by design: the transparent pass
   has no scene lights, and it must not add a second PBR response on top of the
   scene.

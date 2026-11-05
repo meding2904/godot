@@ -80,8 +80,9 @@ For open water, `render_extent` renders the surface out to the horizon: the FFT
 ocean tiles seamlessly past the simulated square and ripples settle to still
 water there. The surface draws only the side facing the camera (the top from
 above, the underside from below), and its shaders take their clock from the
-node's `water_time` parameter rather than `TIME`, so an open scene doesn't
-keep the editor redrawing (and competing with Play Scene for the GPU).
+node's `water_time` parameter rather than `TIME`, so the clock stops with the
+node instead of free-running on the editor's redraws. The waves run in the
+editor as well as in Play: adding the node is the whole setup.
 
 **An endless sea that follows the player.** The FFT ocean is periodic and
 fixed to the world (it's sampled at world X/Z, by the shader and by

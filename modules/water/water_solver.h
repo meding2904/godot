@@ -329,6 +329,10 @@ public:
 	// Ready to step: device up and the render thread has finished building
 	// buffers/textures for the current configure().
 	bool is_available() const { return has_device() && gpu->built.is_set(); }
+	// No main RenderingDevice (headless / Compatibility): the solver runs on
+	// its own private device, so its textures cannot be bound to a material
+	// the scene renderer draws -- sample_height() only.
+	bool uses_local_device() const { return gpu.is_valid() && gpu->local; }
 
 	void configure(const Settings &p_settings);
 	// The ocean's sea state in place (h0 only — no rebuild; see WaterSolverGPU::rt_reinit_spectrum).

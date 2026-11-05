@@ -307,7 +307,7 @@ private:
 	float wave_amplitude = 1.0f;
 	float fetch = 0.0f;
 	float render_extent = 1000.0f;
-	double water_time = 0.0; // shader clock (water_time), advanced only in a running game
+	double water_time = 0.0; // shader clock (water_time), advanced while the node steps (editor and game)
 	float choppiness = 1.0f;
 	NormalMode normal_mode = NORMAL_MODE_PER_PIXEL;
 	bool foam_enabled = true;
