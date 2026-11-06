@@ -1278,6 +1278,12 @@ void WaterBody3D::set_surface_mesh(const Ref<Mesh> &p_mesh) {
 void WaterBody3D::set_water_material(const Ref<ShaderMaterial> &p_material) {
 	water_material = p_material;
 	own_material = p_material.is_null();
+	if (p_material.is_valid() && p_material->get_shader().is_valid()) {
+		// The node's own material can come back from a saved scene as a
+		// sub-resource: recognize it so temporal_aa/screen_space can rebuild
+		// its shader variant instead of treating it as a custom material.
+		own_material = p_material->get_shader()->get_code().contains("WaterBody3D built-in water material");
+	}
 	if (mesh_instance != nullptr && water_material.is_valid()) {
 		mesh_instance->set_material_override(water_material);
 	}
@@ -1800,6 +1806,14 @@ void WaterBody3D::_rebuild() {
 		mesh_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
 		add_child(mesh_instance, false, INTERNAL_MODE_BACK);
 	}
+	if (own_material && water_material.is_valid() && water_material->get_shader().is_valid()) {
+		const String code = water_material->get_shader()->get_code();
+		const bool has_screen_space = code.contains("WATER_SCREEN_SPACE");
+		const bool has_temporal = code.contains("water_temporal");
+		if (has_screen_space != screen_space || has_temporal != temporal_aa) {
+			water_material = Ref<ShaderMaterial>();
+		}
+	}
 	if (water_material.is_null()) {
 		Ref<Shader> shader;
 		shader.instantiate();
@@ -1827,6 +1841,14 @@ void WaterBody3D::_rebuild() {
 			if (type_at >= 0) {
 				code = code.insert(type_at + type_line.length(), "\n#define WATER_TEMPORAL");
 			}
+		}
+		// Marks the auto-created material. Godot may serialize it into the
+		// scene with the node, and on load it then must not be mistaken for a
+		// user-provided custom material.
+		const String type_line = "shader_type spatial;";
+		const int type_at = code.find(type_line);
+		if (type_at >= 0) {
+			code = code.insert(type_at + type_line.length(), "\n// WaterBody3D built-in water material");
 		}
 		shader->set_code(code);
 		Ref<ShaderMaterial> m;
