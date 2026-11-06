@@ -214,10 +214,13 @@ uniform sampler2D detail_normal : hint_normal, filter_linear_mipmap_anisotropic,
 uniform float detail_normal_strength = 0.35;
 uniform float detail_normal_scale = 0.35;
 uniform float detail_normal_speed = 0.35;
-// Distance (m) over which high-frequency shading is band-limited: procedural
-// foam lace melts to its average, the sun glint widens and dims, and the
-// per-pixel normals flatten toward up. Without this, detail smaller than a
-// distant pixel aliases into shimmer.
+// Distance (m) that selects the shading LOD tiers and band-limits the
+// material: procedural foam lace melts to its average, the waterline jitter,
+// foam and crest glow fade out, the sun glint widens and dims, the per-pixel
+// normal flattens toward up, and past _end the material skips the procedural
+// detail entirely and the geometry stops displacing (sub-pixel waves there
+// only alias the horizon). Without this, detail smaller than a distant pixel
+// shimmers.
 uniform float distance_fade_start = 100.0;
 uniform float distance_fade_end = 650.0;
 
@@ -299,7 +302,7 @@ float wake_foam(vec2 world_xz) {
 	return min(wake_sample(world_xz).y, 1.0);
 }
 
-vec3 surface_offset(vec2 world_xz) {
+vec3 surface_offset(vec2 world_xz, float geom_far) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 cuv_o = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic -- anchored to the WORLD, so moving grid_center (a re-centre) never slides the waves
@@ -316,6 +319,13 @@ vec3 surface_offset(vec2 world_xz) {
 	// (its sources sit under the hull, and sample_height() reads it there):
 	// read it at this point's displaced position.
 	h += wake_height(world_xz + d);
+	// LOD: waves smaller than a pixel only alias the horizon silhouette, so
+	// the far surface flattens onto the still level (the shading normal is
+	// band-limited separately in fragment()). The ground clamp below still
+	// lifts the thin film over a distant shore, so its waterline keeps its
+	// swash film.
+	h = mix(h, water_level, geom_far);
+	d *= 1.0 - geom_far;
 	// Never below the ground: over dry sand (and in the deepest troughs over
 	// shallows) the surface lies on the sand as a thin film, which is where
 	// the swash shows.
@@ -335,10 +345,19 @@ vec3 surface_normal_pixel(vec2 world_xz) {
 	float s = -choppiness * fade;
 	vec4 der = texture(ocean_deriv_tex, cuv_o);
 	float dxz = texture(ocean_disp_tex, cuv_o).b;
-	const float e = 0.2;
-	vec2 du = vec2(e) / ripple_domain_size;
-	float rx = (texture(ripple_height_tex, cuv_r + vec2(du.x, 0.0)).r - texture(ripple_height_tex, cuv_r - vec2(du.x, 0.0)).r) / (2.0 * e);
-	float rz = (texture(ripple_height_tex, cuv_r + vec2(0.0, du.y)).r - texture(ripple_height_tex, cuv_r - vec2(0.0, du.y)).r) / (2.0 * e);
+	// LOD: the ripple layer only exists inside its own square -- past it the
+	// surface is the still water_level, exactly as surface_offset() draws it,
+	// so there is no slope to fetch and four taps to skip.
+	vec2 ruv = rel / ripple_domain_size + 0.5;
+	bool ripple_here = ruv.x > 0.0 && ruv.x < 1.0 && ruv.y > 0.0 && ruv.y < 1.0;
+	float rx = 0.0;
+	float rz = 0.0;
+	if (ripple_here) {
+		const float e = 0.2;
+		vec2 du = vec2(e) / ripple_domain_size;
+		rx = (texture(ripple_height_tex, cuv_r + vec2(du.x, 0.0)).r - texture(ripple_height_tex, cuv_r - vec2(du.x, 0.0)).r) / (2.0 * e);
+		rz = (texture(ripple_height_tex, cuv_r + vec2(0.0, du.y)).r - texture(ripple_height_tex, cuv_r - vec2(0.0, du.y)).r) / (2.0 * e);
+	}
 	// The ripple layer steps at the waterline (dry cells report their wet
 	// neighbours' mean), which the sun picked out as bright streaks along the
 	// shore; over the sand the swash film just follows the ground.
@@ -373,6 +392,12 @@ float foam_value_noise(vec2 p) {
 // Visible foam for the water resting at world_xz: the persistent foam amount,
 // eroded by fixed-to-the-water noise so it breaks into lace as it fades.
 float foam_at(vec2 world_xz, float far_filter) {
+	// LOD far tier: past distance_fade_end one lace cell is smaller than a
+	// pixel and the noise only shimmers; the foam has already faded out by
+	// then (the (1 - far_filter) fade below), so skip its fetch and noise.
+	if (far_filter > 0.995) {
+		return 0.0;
+	}
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 cuv_o = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic -- anchored to the WORLD, so moving grid_center (a re-centre) never slides the waves
@@ -388,7 +413,7 @@ float foam_at(vec2 world_xz, float far_filter) {
 	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and
 	// lacy as the noise eats into it, rather than cutting off at an edge.
 	float f = clamp(amount * (1.0 + foam_breakup) - n * foam_breakup, 0.0, 1.0);
-	return f * f * (3.0 - 2.0 * f) * mix(1.0, 0.4, far_filter);
+	return f * f * (3.0 - 2.0 * f) * (1.0 - far_filter);
 }
 
 // Visible shore foam at world_xz: finer, heavier lace at partial strength.
@@ -405,13 +430,17 @@ vec2 shore_pattern_uv(vec2 world_xz) {
 }
 
 float shore_foam_at(vec2 world_xz, float far_filter) {
+	// LOD far tier: the sheet is sub-pixel there and its lace only shimmers.
+	if (far_filter > 0.995) {
+		return 0.0;
+	}
 	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 q = world_xz * foam_detail_scale * 2.2 + 31.0;
 	float ns = 0.5 * foam_value_noise(q) + 0.5 * foam_value_noise(q * 2.3 - 11.0);
 	ns = mix(ns, 0.5, far_filter);
 	float shore = texture(shore_foam_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
 	float g = clamp(shore * (1.0 + shore_foam_breakup) - ns * shore_foam_breakup, 0.0, 1.0);
-	return g * g * (3.0 - 2.0 * g) * shore_foam_strength;
+	return g * g * (3.0 - 2.0 * g) * shore_foam_strength * (1.0 - far_filter);
 }
 
 // Water depth (m) above the moving waterline: the still-water depth minus an
@@ -423,25 +452,31 @@ float shore_signal(vec2 world_xz, float time, float far_filter) {
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 cuv_o = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic -- anchored to the WORLD, so moving grid_center (a re-centre) never slides the waves
 	float depth = depth_r(world_xz, cuv_r);
-	float eta = texture(ocean_height_tex, cuv_o).r; // unfaded: the waves arriving here
-	// Lobes a few meters across (like real swash), drifting, with the waves
-	// pushing the whole edge in and out over time.
-	vec2 p = world_xz * 0.45;
-	float n = 0.65 * foam_value_noise(p + vec2(time * 0.12, time * 0.05)) + 0.35 * foam_value_noise(p * 2.4 - vec2(time * 0.07, 0.0));
-	float wave = clamp(eta / max(swash_wave_height, 1e-3), -1.0, 1.0);
-	float offset = swash_reach * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
-	vec2 q = world_xz * shore_detail_scale;
-	float eb = 0.5 * foam_value_noise(q * 2.3 + vec2(time * 0.25, 0.0)) + 0.3 * foam_value_noise(q * 6.1 + vec2(3.0, time * 0.4)) + 0.2 * foam_value_noise(q * 15.0 - 7.0);
-	// Far away, one cell of either noise is sub-pixel: drop the jitter, or
-	// the waterline crawls as the camera moves.
-	offset *= 1.0 - far_filter;
-	eb = mix(eb, 0.5, far_filter);
 	float run_up = texture(swash_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
-	float jitter = (eb - 0.5) * 2.0 * swash_edge_breakup;
-	// On dry sand the jitter may only pull the edge back, never add water
-	// past what the swash covers -- or it left a permanent fringe of rim
-	// foam just above the still-water line.
-	jitter = depth > 0.0 ? jitter : min(jitter, run_up);
+	// LOD far tier: both noise fields are sub-pixel past distance_fade_end
+	// (their effect was already mixed away at far_filter 1) -- skip them.
+	float offset = 0.0;
+	float jitter = 0.0;
+	if (far_filter < 0.995) {
+		float eta = texture(ocean_height_tex, cuv_o).r; // unfaded: the waves arriving here
+		// Lobes a few meters across (like real swash), drifting, with the waves
+		// pushing the whole edge in and out over time.
+		vec2 p = world_xz * 0.45;
+		float n = 0.65 * foam_value_noise(p + vec2(time * 0.12, time * 0.05)) + 0.35 * foam_value_noise(p * 2.4 - vec2(time * 0.07, 0.0));
+		float wave = clamp(eta / max(swash_wave_height, 1e-3), -1.0, 1.0);
+		offset = swash_reach * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
+		vec2 q = world_xz * shore_detail_scale;
+		float eb = 0.5 * foam_value_noise(q * 2.3 + vec2(time * 0.25, 0.0)) + 0.3 * foam_value_noise(q * 6.1 + vec2(3.0, time * 0.4)) + 0.2 * foam_value_noise(q * 15.0 - 7.0);
+		// Far away, one cell of either noise is sub-pixel: drop the jitter, or
+		// the waterline crawls as the camera moves.
+		offset *= 1.0 - far_filter;
+		eb = mix(eb, 0.5, far_filter);
+		jitter = (eb - 0.5) * 2.0 * swash_edge_breakup;
+		// On dry sand the jitter may only pull the edge back, never add water
+		// past what the swash covers -- or it left a permanent fringe of rim
+		// foam just above the still-water line.
+		jitter = depth > 0.0 ? jitter : min(jitter, run_up);
+	}
 	// The pull-back gives way where a swash is running up, so over the sand
 	// the film reaches exactly as far as the run-up (and the wet sand); with
 	// no swash it applies right up to the still-water line, or a sliver of
@@ -486,14 +521,16 @@ float distance_filter(float p_distance) {
 
 // Fine detail normals from the scrolling normal map, applied in a world-space
 // tangent frame (the FFT's own slopes supply the large-scale normal).
-vec3 detail_normal_perturb(vec3 world_normal, vec2 world_xz) {
-	if (shading_quality < 1) {
+vec3 detail_normal_perturb(vec3 world_normal, vec2 world_xz, float far_filter) {
+	// LOD: past distance_fade_end the map is sub-pixel (the wave normal is
+	// flattened there anyway); past the halfway mark one layer is enough.
+	if (shading_quality < 1 || far_filter > 0.995) {
 		return world_normal;
 	}
 	vec2 scroll = vec2(0.62, 0.78) * (water_time * detail_normal_speed);
 	vec2 uv = world_xz * detail_normal_scale + scroll;
 	vec3 nm = texture(detail_normal, uv).xyz * 2.0 - 1.0;
-	if (shading_quality >= 2) {
+	if (shading_quality >= 2 && far_filter < 0.5) {
 		vec3 nm2 = texture(detail_normal, uv * 3.3 - scroll * 1.7 + vec2(0.31)).xyz * 2.0 - 1.0;
 		nm.xy = (nm.xy + nm2.xy) * 0.5;
 	}
@@ -509,7 +546,12 @@ void vertex() {
 	VERTEX += (inverse(MODEL_MATRIX) * vec4(mesh_offset.x, 0.0, mesh_offset.y, 0.0)).xyz;
 	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_rest_xz = world_pos.xz;
-	VERTEX += surface_offset(world_pos.xz);
+	// Vertex LOD: the geometry has flattened to the still level by
+	// distance_fade_end; keeping sub-pixel waves there only aliases the
+	// horizon silhouette. Computed here where the camera built-in is in the
+	// vertex stage.
+	float geom_far = smoothstep(distance_fade_start, distance_fade_end, distance(CAMERA_POSITION_WORLD, world_pos));
+	VERTEX += surface_offset(world_pos.xz, geom_far);
 	v_world_normal = vec3(0.0, 1.0, 0.0);
 	v_foam = 0.0;
 	// Per pixel, fragment() computes the normal and foam instead.
@@ -518,10 +560,10 @@ void vertex() {
 		// surface -- e is in world meters, small against the grids' cell
 		// size.
 		const float e = 0.2;
-		vec3 px1 = vec3(e, 0.0, 0.0) + surface_offset(world_pos.xz + vec2(e, 0.0));
-		vec3 px0 = vec3(-e, 0.0, 0.0) + surface_offset(world_pos.xz - vec2(e, 0.0));
-		vec3 pz1 = vec3(0.0, 0.0, e) + surface_offset(world_pos.xz + vec2(0.0, e));
-		vec3 pz0 = vec3(0.0, 0.0, -e) + surface_offset(world_pos.xz - vec2(0.0, e));
+		vec3 px1 = vec3(e, 0.0, 0.0) + surface_offset(world_pos.xz + vec2(e, 0.0), geom_far);
+		vec3 px0 = vec3(-e, 0.0, 0.0) + surface_offset(world_pos.xz - vec2(e, 0.0), geom_far);
+		vec3 pz1 = vec3(0.0, 0.0, e) + surface_offset(world_pos.xz + vec2(0.0, e), geom_far);
+		vec3 pz0 = vec3(0.0, 0.0, -e) + surface_offset(world_pos.xz - vec2(0.0, e), geom_far);
 		vec3 tx = px1 - px0;
 		vec3 tz = pz1 - pz0;
 		v_world_normal = normalize(cross(tz, tx));
@@ -553,9 +595,9 @@ void fragment() {
 	// Shading frame, facing the camera (from below the geometric normal
 	// points away): every term below assumes the lit side.
 	vec3 shade_normal = dot(world_normal, to_camera) < 0.0 ? -world_normal : world_normal;
-	shade_normal = detail_normal_perturb(shade_normal, v_rest_xz);
+	shade_normal = detail_normal_perturb(shade_normal, v_rest_xz, far_filter);
 	// Sub-pixel waves average out at distance; flatten instead of aliasing.
-	shade_normal = normalize(mix(shade_normal, vec3(0.0, 1.0, 0.0), far_filter * 0.6));
+	shade_normal = normalize(mix(shade_normal, vec3(0.0, 1.0, 0.0), far_filter));
 	vec3 sun = normalize(sun_direction);
 
 	if (!camera_above) {
@@ -601,8 +643,13 @@ void fragment() {
 	vec2 cuv_here = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float soft = max(shore_edge_softness, 1e-3) * mix(0.2, 1.0, smoothstep(-0.05, 0.1, depth_r(v_rest_xz, cuv_here)));
 	soft *= mix(1.0, 2.5, far_filter); // a distant waterline covers several pixels
-	float rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
-	rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale));
+	float rim = 0.0;
+	if (far_filter < 0.995) {
+		// LOD far tier: a distant waterline is thinner than a pixel, so the
+		// rim and its lace only shimmer. Fade it before the cutoff.
+		rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
+		rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale)) * (1.0 - far_filter);
+	}
 	foam = max(foam, rim);
 	vec2 cuv_fade = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float shallow = (1.0 - fade_r(v_rest_xz, cuv_fade)) * shallow_tint;
@@ -635,12 +682,14 @@ void fragment() {
 	}
 	base_rgb = mix(base_rgb, reflected, reflection_amt) + specular;
 	base_a = clamp(base_a + reflection_amt * 0.6, 0.0, 1.0);
-	if (shading_quality >= 2) {
+	if (shading_quality >= 2 && far_filter < 0.995) {
 		// Sun through a backlit crest: a dark green glow, bounded to a tint.
+		// LOD: the crest is sub-pixel far away; fade it out before the cutoff
+		// so the switch is invisible.
 		float crest = texture(ocean_height_tex, v_rest_xz / ocean_domain_size + 0.5).r;
 		float crest_up = clamp(crest / max(wave_amplitude, 0.05), 0.0, 1.0);
 		float back = pow(clamp(dot(-to_camera, sun) * 0.5 + 0.5, 0.0, 1.0), 2.0);
-		base_rgb += crest_sss_color * (crest_up * crest_up * back * crest_sss);
+		base_rgb += crest_sss_color * (crest_up * crest_up * back * crest_sss) * (1.0 - far_filter);
 	}
 
 #ifdef WATER_SCREEN_SPACE

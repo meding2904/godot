@@ -212,19 +212,31 @@ GPU to iterate on), planar reflections, volumetric god rays, and a half-res
 refraction path. Sky reflection + sun glitter cover the calm-water case
 meanwhile.
 
-## Aliasing
+## Aliasing and distance LOD
 
-Distant water aliases from four different sources, so the material band-limits
-each one by camera distance (`distance_fade_start` / `distance_fade_end` on
-the material):
+Distant water aliases from several different sources, so the material has
+distance LOD tiers (`distance_fade_start` / `distance_fade_end` on the
+material) and band-limits each one:
 
+- Mid distance: the tiling detail normal drops from two layers to one, and the
+  ripple layer's slope is only fetched inside its own square (past it the
+  surface is the still water level, so there is no slope to draw).
 - Procedural foam/shore noise has no mip chain: its lace melts to its average
-  value, and the waterline jitter is dropped, so the edge stops crawling.
-- The tiling detail normal now has a mip chain and anisotropic sampling
+  value, the waterline jitter is dropped, and foam, shore foam and the
+  waterline rim fade out with distance, as whitecaps do through the air.
+- The tiling detail normal has a mip chain and anisotropic sampling
   (`filter_linear_mipmap_anisotropic`).
 - Sub-pixel waves average out: the per-pixel normal is blended toward up, and
   the sun glint widens (shininess toward 90) and dims.
-- Foam sprite density fades with distance, as whitecaps do through the air.
+- Past `distance_fade_end` the far tier skips the detail normal, crest glow,
+  whitecap/shore lace, waterline rim and swash noise outright, keeps the
+  normal flat, and fades the vertex displacement to the still level so the
+  horizon silhouette stops shimmering.
+
+A view made mostly of near water is unchanged; a far-dominated one (the whole
+screen past the fade distance) measured about 40% cheaper on an RTX 2060 at
+1280x720. Lower `distance_fade_start` / `distance_fade_end` for a cheaper far
+sea (the geometry flattens with them), higher for more detail.
 
 Engine-side options, cheapest first: `msaa_3d` (polygon edges, e.g. the
 horizon silhouette), `screen_space_aa` FXAA/SMAA (post-process; does smooth the

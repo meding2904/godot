@@ -208,7 +208,7 @@ code). The ones worth touching first:
 | `specular_strength` / `specular_shininess` | 0.45 / 480 | Sun glitter |
 | `crest_sss` | 0.6 | Subsurface glow on backlit crests |
 | `detail_normal_strength` / `_scale` | 0.35 / 0.35 | Fine surface texture (generated at startup) |
-| `distance_fade_start` / `_end` | 100 / 650 | Distance band-limiting for distant shimmer |
+| `distance_fade_start` / `_end` | 100 / 650 | Distance band-limiting and the LOD tiers: past `_end` the detail normal, crest glow, foam and shore lace are skipped and the geometry flattens |
 | `foam_threshold` / `foam_persistence` | node props | Whitecaps and how long they linger |
 
 `quality` on the node picks presets: `Low` (64 grids, no detail normals, no
@@ -275,6 +275,10 @@ EMISSION = caustics_color.rgb * (c.r * c.g * caustics_strength);  // green = ove
 - `render_extent` grows the vertex count (graded outward, not uniform), and
   the per-pixel normal path costs a few extra texture fetches; `normal_mode =
   Per Vertex` is cheaper and faceted.
+- Distant water gets cheaper by itself: past `distance_fade_end` the LOD
+  skips the procedural detail and flattens the displaced geometry (a
+  far-dominated view measured about 40% cheaper on an RTX 2060; near water is
+  unchanged). Lower `distance_fade_start` / `_end` for a cheaper far sea.
 - `caustics_enabled` adds a draw pass every frame, and `screen_space` adds a
   screen copy; both are off by default.
 - At hundreds of kilometers from the origin, float precision jitters like any
