@@ -280,6 +280,13 @@ public:
 	void set_screen_space(bool p_enabled);
 	bool get_screen_space() const { return screen_space; }
 
+	// Water-only temporal resolve (Forward+, MSAA off): the surface renders
+	// into its own target and is accumulated across frames, so near-field
+	// shimmer settles without enabling TAA for the whole scene. Needs the
+	// built-in material; a custom one is untouched.
+	void set_temporal_aa(bool p_enabled);
+	bool get_temporal_aa() const { return temporal_aa; }
+
 	// Light-space caustics: a direct RenderingDevice draw pass that projects
 	// refracted surface-grid samples into a texture, without a SubViewport.
 	void set_caustics_enabled(bool p_enabled);
@@ -408,10 +415,16 @@ private:
 	bool warned_no_sun = false;
 	int sun_retry = 0;
 	bool screen_space = false;
+	bool temporal_aa = false;
+	bool temporal_installed = false;
+	ObjectID temporal_world;
 	bool auto_recenter = true;
 	bool underwater_effect = true;
 	WaterUnderwaterEffect *underwater_effect_node = nullptr;
 	void _update_underwater_node();
+	void _update_temporal_effect(bool p_exiting = false);
+	void _update_temporal_state();
+	int temporal_frame = 0;
 	Ref<ImageTexture> detail_normal_tex;
 	// Valid stand-ins for the solver's textures until the RenderingDevice ones
 	// appear: the material never references an unbound sampler, so the node is

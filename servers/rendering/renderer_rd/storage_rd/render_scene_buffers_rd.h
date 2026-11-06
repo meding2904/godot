@@ -43,6 +43,9 @@
 
 #define RB_SCOPE_BUFFERS SNAME("render_buffers")
 #define RB_SCOPE_VRS SNAME("VRS")
+// Offscreen water color for the temporal water pass: water_temporal materials
+// render here, a CompositorEffect resolves and composites it before the alpha pass.
+#define RB_SCOPE_WATER SNAME("water")
 
 #define RB_TEXTURE SNAME("texture")
 #define RB_TEX_COLOR SNAME("color")
@@ -62,6 +65,7 @@
 
 #define RB_TEX_BACK_COLOR SNAME("back_color")
 #define RB_TEX_BACK_DEPTH SNAME("back_depth")
+#define RB_TEX_WATER_COLOR SNAME("color")
 
 class RenderSceneBuffersRD : public RenderSceneBuffers {
 	GDCLASS(RenderSceneBuffersRD, RenderSceneBuffers);

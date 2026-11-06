@@ -30,6 +30,7 @@ func _ready() -> void:
 		_check_shader()
 		_check_quality()
 		_check_lod_presets()
+		_check_temporal_aa()
 		_check_zero_config()
 		await _check_waves()
 		await _check_recenter()
@@ -110,6 +111,18 @@ func _check_lod_presets() -> void:
 		_pass("LOD presets set the three layers' dials, and a hand-tuned dial drops to Custom")
 	else:
 		_fail("LOD presets/dials wrong (low %s, ultra %s, custom %s)" % [low_ok, ultra_ok, custom_ok])
+
+func _check_temporal_aa() -> void:
+	var before := _water.temporal_aa
+	_water.temporal_aa = true
+	var enabled := _water.temporal_aa and _water.water_material != null
+	_water.temporal_aa = false
+	var disabled := not _water.temporal_aa
+	_water.temporal_aa = before
+	if enabled and disabled:
+		_pass("temporal_aa builds the water-only variant and toggles off")
+	else:
+		_fail("temporal_aa did not toggle (on %s, off %s)" % [enabled, disabled])
 
 func _check_zero_config() -> void:
 	var has_internal := _water.get_child_count(true) > _water.get_child_count()

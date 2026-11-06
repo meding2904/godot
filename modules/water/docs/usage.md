@@ -233,6 +233,14 @@ over which they return to full; `lod_mesh_growth` is how much further each
 open-water mesh ring sits than the last. Tuning any dial by hand switches the
 preset to `Custom`.
 
+`temporal_aa` (off by default, Forward+ and 3D MSAA off) renders the water into
+its own pass and accumulates it across frames with a sub-pixel jitter, camera
+reprojection and neighborhood clamping: a water-only temporal resolve, with no
+TAA on the rest of the scene. It needs the built-in material and resolves one
+water body per view; global TAA/upscaling should stay off, and transparent
+geometry behind the water draws over it (the water composites before the other
+transparents).
+
 `screen_space` (off by default) rebuilds the material with a screen-sampling
 variant and adds refraction. Before relying on it, run
 `demo/scenes/screen_probe.tscn`: the 1:1 copy quad must be invisible; if it is

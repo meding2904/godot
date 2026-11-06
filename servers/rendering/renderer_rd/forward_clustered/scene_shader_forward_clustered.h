@@ -271,6 +271,8 @@ public:
 		bool uses_z_clip_scale = false;
 		RSE::CullMode cull_mode = RSE::CULL_MODE_DISABLED;
 
+		bool water_temporal = false;
+
 		bool stencil_enabled = false;
 		uint32_t stencil_flags = 0;
 		StencilCompare stencil_compare = STENCIL_COMPARE_LESS;

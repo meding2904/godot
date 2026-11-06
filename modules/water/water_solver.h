@@ -101,6 +101,7 @@ public:
 	RID uset_fft_d_to_g, uset_fft_gtoh, uset_fft_htog;
 
 	RID tex_ripple_height, tex_ocean_height; // real RD textures, wrapped by Texture2DRD on the caller side
+	RID tex_ripple_height_prev, tex_ocean_height_prev; // previous frame, for the water temporal resolve
 	RID tex_ocean_disp; // RGBA32F (Dx, Dz, dDx/dz, 0), same resolution as tex_ocean_height
 	RID tex_ocean_deriv; // RGBA32F (dh/dx, dh/dz, dDx/dx, dDz/dz)
 	RID tex_ocean_foam; // R32F foam amount 0..1, rest coordinates, persists across steps
@@ -360,6 +361,8 @@ public:
 	// these with no CPU round trip at all.
 	RID get_ripple_height_texture_rd_rid() const;
 	RID get_ocean_height_texture_rd_rid() const;
+	RID get_ripple_height_prev_texture_rd_rid() const;
+	RID get_ocean_height_prev_texture_rd_rid() const;
 	// R8 shallow-water fade for the ocean layer over the ripple domain (1 =
 	// full chop, 0 = none); valid once is_available().
 	RID get_ocean_fade_texture_rd_rid() const;

@@ -30,6 +30,7 @@
 
 #include "water_body_3d.h"
 
+#include "water_temporal_effect.h"
 #include "water_underwater_effect.h"
 #include "water_wake_3d.h"
 
@@ -117,6 +118,8 @@ uniform bool open_sea_beyond = false;
 // World xz the whole open-water mesh is moved by, so its dense core stays
 // under the camera; set by the node every frame.
 uniform vec2 mesh_offset = vec2(0.0);
+// Sub-pixel offset (NDC) for the water-only temporal resolve.
+uniform vec2 temporal_jitter = vec2(0.0);
 // Moving wake grids (WaterWake3D), up to four: height textures and
 // their rects (xy world xz of the corner, z side length -- 0 = unused, w how
 // much the wake fades out over the shore ripple grid, 0..1).
@@ -610,6 +613,15 @@ void vertex() {
 		v_world_normal = normalize(cross(tz, tx));
 		v_foam = foam_at(world_pos.xz, lod.x);
 	}
+
+#ifdef WATER_TEMPORAL
+	// Water-only temporal AA: the renderer draws this material into its own
+	// target and accumulates it, so each frame the surface is sampled a
+	// fraction of a pixel away (Halton) and the history resolves the extra
+	// samples.
+	POSITION = PROJECTION_MATRIX * MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
+	POSITION.xy += temporal_jitter * POSITION.w;
+#endif
 }
 
 void fragment() {
@@ -958,6 +970,8 @@ void WaterBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_sun_path"), &WaterBody3D::get_sun_path);
 	ClassDB::bind_method(D_METHOD("set_screen_space", "enabled"), &WaterBody3D::set_screen_space);
 	ClassDB::bind_method(D_METHOD("get_screen_space"), &WaterBody3D::get_screen_space);
+	ClassDB::bind_method(D_METHOD("set_temporal_aa", "enabled"), &WaterBody3D::set_temporal_aa);
+	ClassDB::bind_method(D_METHOD("get_temporal_aa"), &WaterBody3D::get_temporal_aa);
 	ClassDB::bind_method(D_METHOD("set_auto_recenter", "enabled"), &WaterBody3D::set_auto_recenter);
 	ClassDB::bind_method(D_METHOD("get_auto_recenter"), &WaterBody3D::get_auto_recenter);
 	ClassDB::bind_method(D_METHOD("set_underwater_effect", "enabled"), &WaterBody3D::set_underwater_effect);
@@ -1032,6 +1046,7 @@ void WaterBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "water_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_water_material", "get_water_material");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "quality", PROPERTY_HINT_ENUM, "Low,Medium,High,Custom"), "set_quality", "get_quality");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "screen_space"), "set_screen_space", "get_screen_space");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "temporal_aa"), "set_temporal_aa", "get_temporal_aa");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_recenter"), "set_auto_recenter", "get_auto_recenter");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "underwater_effect"), "set_underwater_effect", "get_underwater_effect");
 
@@ -1653,6 +1668,78 @@ void WaterBody3D::set_screen_space(bool p_enabled) {
 	}
 }
 
+void WaterBody3D::set_temporal_aa(bool p_enabled) {
+	if (temporal_aa == p_enabled) {
+		return;
+	}
+	if (p_enabled && !own_material && water_material.is_valid()) {
+		WARN_PRINT("WaterBody3D: temporal_aa needs the built-in water material; the custom material renders unchanged.");
+	}
+	temporal_aa = p_enabled;
+	temporal_frame = 0;
+	_update_temporal_effect();
+	if (own_material) {
+		// The render_mode is compiled into the shader: rebuild the material.
+		water_material = Ref<ShaderMaterial>();
+		textures_bound = false;
+		_rebuild();
+	}
+}
+
+static float _halton(int p_index, int p_base) {
+	real_t f = 1.0;
+	real_t r = 0.0;
+	while (p_index > 0) {
+		f /= (real_t)p_base;
+		r += f * (real_t)(p_index % p_base);
+		p_index /= p_base;
+	}
+	return (float)r;
+}
+
+void WaterBody3D::_update_temporal_state() {
+	temporal_frame = (temporal_frame + 1) % 64;
+	const real_t node_y = get_global_position().y;
+	WaterTemporalEffect::set_surface(node_y + water_level);
+	if (World3D *world = get_world_3d().ptr()) {
+		WaterTemporalEffect::refresh(world);
+	}
+	if (solver.is_available()) {
+		WaterTemporalEffect::set_water_data(solver.get_ripple_height_texture_rd_rid(), solver.get_ocean_height_texture_rd_rid(), solver.get_ripple_height_prev_texture_rd_rid(), solver.get_ocean_height_prev_texture_rd_rid(), solver.get_ocean_fade_texture_rd_rid(), grid_center, active_domain_size, ocean_domain_size, (float)node_y, water_level);
+	} else {
+		WaterTemporalEffect::set_water_data(RID(), RID(), RID(), RID(), RID(), Vector2(), Vector2(), Vector2(), 0.0f, 0.0f);
+	}
+
+	const Viewport *viewport = get_viewport();
+	if (viewport == nullptr) {
+		return;
+	}
+	const Size2 render_size = viewport->get_visible_rect().size * viewport->get_scaling_3d_scale();
+	if (render_size.x < 1.0 || render_size.y < 1.0) {
+		return;
+	}
+	// Halton(2,3), centered on the pixel: one sample per frame, the history
+	// resolve averages the eight-frame cycle.
+	const Vector2 pixel_jitter(_halton(temporal_frame + 1, 2) - 0.5f, _halton(temporal_frame + 1, 3) - 0.5f);
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("temporal_jitter", pixel_jitter * 2.0f / render_size);
+	}
+}
+
+void WaterBody3D::_update_temporal_effect(bool p_exiting) {
+	World3D *world = is_inside_world() ? get_world_3d().ptr() : nullptr;
+	if (temporal_installed && (p_exiting || !temporal_aa || world == nullptr || world->get_instance_id() != temporal_world)) {
+		WaterTemporalEffect::uninstall(temporal_world);
+		temporal_installed = false;
+		temporal_world = ObjectID();
+	}
+	if (!p_exiting && temporal_aa && world != nullptr && !temporal_installed) {
+		WaterTemporalEffect::install(world);
+		temporal_installed = true;
+		temporal_world = world->get_instance_id();
+	}
+}
+
 void WaterBody3D::set_caustics_enabled(bool p_enabled) {
 	caustics_enabled = p_enabled;
 	_rebuild();
@@ -1679,11 +1766,13 @@ void WaterBody3D::_notification(int p_what) {
 			sun_light = nullptr;
 			sun_retry = 0;
 			_rebuild();
+			_update_temporal_effect();
 			_update_underwater_node();
 			set_physics_process_internal(true);
 			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
+			_update_temporal_effect(true);
 			set_physics_process_internal(false);
 			set_process_internal(false);
 			// The solver's textures go with this node (or are rebuilt on the
@@ -1694,6 +1783,9 @@ void WaterBody3D::_notification(int p_what) {
 			_update(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
+			if (temporal_aa) {
+				_update_temporal_state();
+			}
 			_update_mesh_offset();
 		} break;
 	}
@@ -1720,6 +1812,20 @@ void WaterBody3D::_rebuild() {
 			const int at = code.find(type_line);
 			if (at >= 0) {
 				code = code.insert(at + type_line.length(), "\n#define WATER_SCREEN_SPACE");
+			}
+		}
+		if (temporal_aa) {
+			// Marks the material for the renderer's isolated water pass (and
+			// the water-only temporal resolve); the normal path is unchanged.
+			const String mode_line = "render_mode blend_mix, cull_disabled, unshaded;";
+			const int at = code.find(mode_line);
+			if (at >= 0) {
+				code = code.replace(mode_line, "render_mode blend_mix, cull_disabled, unshaded, water_temporal;");
+			}
+			const String type_line = "shader_type spatial;";
+			const int type_at = code.find(type_line);
+			if (type_at >= 0) {
+				code = code.insert(type_at + type_line.length(), "\n#define WATER_TEMPORAL");
 			}
 		}
 		shader->set_code(code);

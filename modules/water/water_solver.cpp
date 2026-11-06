@@ -221,7 +221,7 @@ void WaterSolverGPU::_rt_free_buffers() {
 			*b = RID();
 		}
 	}
-	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_ocean_disp, &tex_ocean_deriv, &tex_ocean_foam, &tex_shore_foam, &tex_shore_foam_tmp, &tex_caustics, &tex_cell_depth, &tex_ocean_fade, &tex_shore_depth, &tex_swash, &tex_swash_tmp };
+	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_ripple_height_prev, &tex_ocean_height_prev, &tex_ocean_disp, &tex_ocean_deriv, &tex_ocean_foam, &tex_shore_foam, &tex_shore_foam_tmp, &tex_caustics, &tex_cell_depth, &tex_ocean_fade, &tex_shore_depth, &tex_swash, &tex_swash_tmp };
 	for (RID *t : texs) {
 		if (t->is_valid()) {
 			rd->free_rid(*t);
@@ -390,13 +390,19 @@ void WaterSolverGPU::_rt_build_buffers() {
 	ripple_tf.format = RD::DATA_FORMAT_R32_SFLOAT;
 	ripple_tf.width = n;
 	ripple_tf.height = n;
-	ripple_tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+	ripple_tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
 	tex_ripple_height = rd->texture_create(ripple_tf, RD::TextureView());
+	RD::TextureFormat ripple_prev_tf = ripple_tf;
+	ripple_prev_tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
+	tex_ripple_height_prev = rd->texture_create(ripple_prev_tf, RD::TextureView());
 
 	RD::TextureFormat ocean_tf = ripple_tf;
 	ocean_tf.width = on;
 	ocean_tf.height = on;
 	tex_ocean_height = rd->texture_create(ocean_tf, RD::TextureView());
+	RD::TextureFormat ocean_prev_tf = ocean_tf;
+	ocean_prev_tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
+	tex_ocean_height_prev = rd->texture_create(ocean_prev_tf, RD::TextureView());
 	RD::TextureFormat disp_tf = ocean_tf;
 	disp_tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
 	tex_ocean_disp = rd->texture_create(disp_tf, RD::TextureView());
@@ -766,6 +772,14 @@ void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution,
 }
 
 void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p_depth, float p_damping, float p_gravity, float p_water_level, float p_ripple_amplitude, PackedFloat32Array p_spheres, PackedFloat32Array p_impulses) {
+	// Previous frame's heights, for the water temporal resolve's wave
+	// velocity. Copied before this step overwrites them.
+	if (rd != nullptr && tex_ripple_height_prev.is_valid() && tex_ocean_height_prev.is_valid()) {
+		const int rn = grid_resolution;
+		const int on = ocean_grid_resolution;
+		rd->texture_copy(tex_ripple_height, tex_ripple_height_prev, Vector3(), Vector3(), Vector3(rn, rn, 1), 0, 0, 0, 0);
+		rd->texture_copy(tex_ocean_height, tex_ocean_height_prev, Vector3(), Vector3(), Vector3(on, on, 1), 0, 0, 0, 0);
+	}
 	if (rd == nullptr || !shaders_ok || buf_params.is_null()) {
 		return;
 	}
@@ -1343,6 +1357,20 @@ RID WaterSolver::get_ocean_height_texture_rd_rid() const {
 		return RID();
 	}
 	return gpu->tex_ocean_height;
+}
+
+RID WaterSolver::get_ripple_height_prev_texture_rd_rid() const {
+	if (gpu.is_null()) {
+		return RID();
+	}
+	return gpu->tex_ripple_height_prev;
+}
+
+RID WaterSolver::get_ocean_height_prev_texture_rd_rid() const {
+	if (gpu.is_null()) {
+		return RID();
+	}
+	return gpu->tex_ocean_height_prev;
 }
 
 RID WaterSolver::get_ocean_foam_texture_rd_rid() const {

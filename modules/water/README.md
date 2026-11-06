@@ -257,6 +257,17 @@ the dials as authored -- and the dials (`lod_distance_start`, `_mid`, `_end`,
 open-water mesh's rings spread toward `render_extent`) can be tuned
 individually; a hand-tuned dial switches the preset to `Custom`.
 
+The node can also run a **water-only temporal resolve** (`temporal_aa`, off by
+default): the water renders into its own color target, is jittered a fraction
+of a pixel each frame, and a module compute pass accumulates it with camera
+reprojection (the surface point is lifted onto the height field), a 3x3
+neighborhood clamp and reset on disocclusion. It measures about half the
+frame-to-frame shimmer of the same view in the open-sea probe, and it leaves
+every non-water pixel untouched. Limits: Forward+ only, 3D MSAA off, the
+built-in material, one water body per view, and no global TAA/upscaling; water
+is composited before the other transparents (so transparent geometry behind
+the water draws over it).
+
 Engine-side options, cheapest first: `msaa_3d` (polygon edges, e.g. the
 horizon silhouette), `screen_space_aa` FXAA/SMAA (post-process; does smooth the
 blended water), `use_taa` (temporal — the water writes no motion vectors, so

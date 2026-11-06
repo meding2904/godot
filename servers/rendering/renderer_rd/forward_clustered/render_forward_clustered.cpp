@@ -205,6 +205,28 @@ RID RenderForwardClustered::RenderBufferDataForwardClustered::get_color_pass_fb(
 	}
 }
 
+RID RenderForwardClustered::RenderBufferDataForwardClustered::ensure_water_color() {
+	ERR_FAIL_NULL_V(render_buffers, RID());
+	if (!render_buffers->has_texture(RB_SCOPE_WATER, RB_TEX_WATER_COLOR)) {
+		render_buffers->create_texture(RB_SCOPE_WATER, RB_TEX_WATER_COLOR, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT);
+	}
+	return render_buffers->get_texture(RB_SCOPE_WATER, RB_TEX_WATER_COLOR);
+}
+
+void RenderForwardClustered::RenderBufferDataForwardClustered::clear_water_color() {
+	if (render_buffers) {
+		render_buffers->clear_context(RB_SCOPE_WATER);
+	}
+}
+
+RID RenderForwardClustered::RenderBufferDataForwardClustered::get_water_fb() {
+	ERR_FAIL_NULL_V(render_buffers, RID());
+	RID color = ensure_water_color();
+	// Single-sample: water_temporal is only split out when MSAA is off.
+	RID depth = render_buffers->get_depth_texture();
+	return FramebufferCacheRD::get_singleton()->get_cache(color, depth);
+}
+
 RID RenderForwardClustered::RenderBufferDataForwardClustered::get_depth_fb(DepthFrameBufferType p_type) {
 	ERR_FAIL_NULL_V(render_buffers, RID());
 	bool use_msaa = render_buffers->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED;
@@ -1917,6 +1939,44 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 	render_list[RENDER_LIST_MOTION].sort_by_key();
 	render_list[RENDER_LIST_ALPHA].sort_by_reverse_depth_and_priority();
 
+	// Water temporal AA: pull water_temporal surfaces out of the alpha list.
+	// They render into their own color target before the pre-transparent
+	// compositor effects, which resolve and composite them; the remaining
+	// transparents then draw over the water as usual. MSAA and reflection
+	// probes keep the normal forward path.
+	uint32_t water_element_count = 0;
+	if (!is_reflection_probe && rb_data.is_valid() && rb->get_msaa_3d() == RSE::VIEWPORT_MSAA_DISABLED) {
+		RenderList &alpha_list = render_list[RENDER_LIST_ALPHA];
+		if (!alpha_list.elements.is_empty()) {
+			LocalVector<GeometryInstanceSurfaceDataCache *> water_elements;
+			LocalVector<GeometryInstanceSurfaceDataCache *> other_elements;
+			for (uint32_t i = 0; i < alpha_list.elements.size(); i++) {
+				GeometryInstanceSurfaceDataCache *surf = alpha_list.elements[i];
+				if (surf->material != nullptr && surf->material->shader_data != nullptr && surf->material->shader_data->water_temporal) {
+					water_elements.push_back(surf);
+				} else {
+					other_elements.push_back(surf);
+				}
+			}
+			if (water_elements.is_empty()) {
+				// No temporal water this frame: drop last frame's target so the
+				// resolve cannot composite stale water over the scene.
+				rb_data->clear_water_color();
+			} else {
+				alpha_list.elements.clear();
+				for (uint32_t i = 0; i < water_elements.size(); i++) {
+					alpha_list.elements.push_back(water_elements[i]);
+				}
+				for (uint32_t i = 0; i < other_elements.size(); i++) {
+					alpha_list.elements.push_back(other_elements[i]);
+				}
+				water_element_count = water_elements.size();
+			}
+		} else {
+			rb_data->clear_water_color();
+		}
+	}
+
 	int *render_info = p_render_data->render_info ? p_render_data->render_info->info[RSE::VIEWPORT_RENDER_INFO_TYPE_VISIBLE] : (int *)nullptr;
 	_fill_instance_data(RENDER_LIST_OPAQUE, render_info);
 	_fill_instance_data(RENDER_LIST_MOTION, render_info);
@@ -2406,6 +2466,26 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			}
 		}
 
+		if (water_element_count > 0) {
+			RENDER_TIMESTAMP("Render 3D Water Temporal Pass");
+			RD::get_singleton()->draw_command_begin_label("Render 3D Water Temporal Pass");
+
+			uint32_t water_uniform_buffer_index = _setup_environment(p_render_data, is_reflection_probe, screen_size, screen_size, p_default_bg_color, false);
+			RID water_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, radiance_texture, samplers, water_uniform_buffer_index, true);
+
+			uint32_t water_color_pass_flags = (color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENT)) & ~uint32_t(COLOR_PASS_FLAG_SEPARATE_SPECULAR);
+			water_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);
+
+			RenderList &alpha_list = render_list[RENDER_LIST_ALPHA];
+			RID water_fb = rb_data->get_water_fb();
+			RenderListParameters water_params(alpha_list.elements.ptr(), alpha_list.element_info.ptr(), water_element_count, reverse_cull, PASS_MODE_COLOR, water_color_pass_flags, false, p_render_data->directional_light_soft_shadows, water_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
+			Vector<Color> water_clear;
+			water_clear.push_back(Color(0, 0, 0, 0));
+			_render_list_with_draw_list(&water_params, water_fb, RD::DRAW_CLEAR_COLOR_0, water_clear, 0.0f, 0u, p_render_data->render_region);
+
+			RD::get_singleton()->draw_command_end_label();
+		}
+
 		RENDER_TIMESTAMP("Process Pre Transparent Compositor Effects");
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data);
 	}
@@ -2424,8 +2504,11 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);
 
 		RID alpha_framebuffer = rb_data.is_valid() ? rb_data->get_color_pass_fb(transparent_color_pass_flags) : color_only_framebuffer;
-		RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, transparent_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
-		_render_list_with_draw_list(&render_list_params, alpha_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, p_render_data->render_region);
+		uint32_t alpha_count = render_list[RENDER_LIST_ALPHA].elements.size() - water_element_count;
+		RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr() + water_element_count, render_list[RENDER_LIST_ALPHA].element_info.ptr() + water_element_count, alpha_count, reverse_cull, PASS_MODE_COLOR, transparent_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, water_element_count, base_specialization);
+		if (alpha_count > 0) {
+			_render_list_with_draw_list(&render_list_params, alpha_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, p_render_data->render_region);
+		}
 	}
 
 	RD::get_singleton()->draw_command_end_label();
