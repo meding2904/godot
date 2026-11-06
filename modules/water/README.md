@@ -263,7 +263,8 @@ of a pixel each frame, and a module compute pass accumulates it with camera
 reprojection (the surface point is lifted onto the height field), a 3x3
 neighborhood clamp and reset on disocclusion. It measures about half the
 frame-to-frame shimmer of the same view in the open-sea probe, and it leaves
-every non-water pixel untouched. Limits: Forward+ only, 3D MSAA off, the
+every non-water pixel untouched. It is a Play-mode feature: the editor
+preview always uses the normal path. Limits: Forward+ only, 3D MSAA off, the
 built-in material, one water body per view, and no global TAA/upscaling; water
 is composited before the other transparents (so transparent geometry behind
 the water draws over it).

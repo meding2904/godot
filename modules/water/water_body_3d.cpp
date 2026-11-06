@@ -1678,7 +1678,7 @@ void WaterBody3D::set_temporal_aa(bool p_enabled) {
 	if (temporal_aa == p_enabled) {
 		return;
 	}
-	if (p_enabled && !own_material && water_material.is_valid()) {
+	if (p_enabled && !Engine::get_singleton()->is_editor_hint() && !own_material && water_material.is_valid()) {
 		WARN_PRINT("WaterBody3D: temporal_aa needs the built-in water material; the custom material renders unchanged.");
 	}
 	temporal_aa = p_enabled;
@@ -1733,6 +1733,9 @@ void WaterBody3D::_update_temporal_state() {
 }
 
 void WaterBody3D::_update_temporal_effect(bool p_exiting) {
+	if (Engine::get_singleton()->is_editor_hint()) {
+		p_exiting = true;
+	}
 	World3D *world = is_inside_world() ? get_world_3d().ptr() : nullptr;
 	if (temporal_installed && (p_exiting || !temporal_aa || world == nullptr || world->get_instance_id() != temporal_world)) {
 		WaterTemporalEffect::uninstall(temporal_world);
@@ -1789,7 +1792,7 @@ void WaterBody3D::_notification(int p_what) {
 			_update(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
-			if (temporal_aa) {
+			if (temporal_aa && !Engine::get_singleton()->is_editor_hint()) {
 				_update_temporal_state();
 			}
 			_update_mesh_offset();
@@ -1810,7 +1813,8 @@ void WaterBody3D::_rebuild() {
 		const String code = water_material->get_shader()->get_code();
 		const bool has_screen_space = code.contains("WATER_SCREEN_SPACE");
 		const bool has_temporal = code.contains("water_temporal");
-		if (has_screen_space != screen_space || has_temporal != temporal_aa) {
+		const bool want_temporal = temporal_aa && !Engine::get_singleton()->is_editor_hint();
+		if (has_screen_space != screen_space || has_temporal != want_temporal) {
 			water_material = Ref<ShaderMaterial>();
 		}
 	}
@@ -1828,9 +1832,10 @@ void WaterBody3D::_rebuild() {
 				code = code.insert(at + type_line.length(), "\n#define WATER_SCREEN_SPACE");
 			}
 		}
-		if (temporal_aa) {
+		if (temporal_aa && !Engine::get_singleton()->is_editor_hint()) {
 			// Marks the material for the renderer's isolated water pass (and
-			// the water-only temporal resolve); the normal path is unchanged.
+			// the water-only temporal resolve) in Play; the editor preview
+			// keeps the normal path.
 			const String mode_line = "render_mode blend_mix, cull_disabled, unshaded;";
 			const int at = code.find(mode_line);
 			if (at >= 0) {

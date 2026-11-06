@@ -233,7 +233,7 @@ over which they return to full; `lod_mesh_growth` is how much further each
 open-water mesh ring sits than the last. Tuning any dial by hand switches the
 preset to `Custom`.
 
-`temporal_aa` (off by default, Forward+ and 3D MSAA off) renders the water into
+`temporal_aa` (off by default, Play mode only, Forward+ and 3D MSAA off) renders the water into
 its own pass and accumulates it across frames with a sub-pixel jitter, camera
 reprojection and neighborhood clamping: a water-only temporal resolve, with no
 TAA on the rest of the scene. It needs the built-in material and resolves one

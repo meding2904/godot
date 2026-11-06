@@ -64,14 +64,19 @@ class WaterTemporalEffect : public CompositorEffect {
 	void _free_rd_resources();
 	void _render(int p_callback_type, const RenderData *p_render_data);
 
-	// Temporal state (render thread only).
-	int history_index = 0;
-	bool history_valid = false;
-	Size2i history_size;
-	RID last_ripple_height;
-	RID last_ocean_height;
-	bool have_previous_camera = false;
-	Projection previous_view_projection;
+	// Temporal state, one entry per viewport (render thread only): the
+	// editor and split views render the same world through separate render
+	// buffers, and sharing this between them would interleave history.
+	struct ViewState {
+		int history_index = 0;
+		bool history_valid = false;
+		Size2i history_size;
+		RID last_ripple_height;
+		RID last_ocean_height;
+		bool have_previous_camera = false;
+		Projection previous_view_projection;
+	};
+	HashMap<ObjectID, ViewState> view_states;
 
 	// Surface parameters published by the water body (main thread), read while
 	// resolving (render thread).

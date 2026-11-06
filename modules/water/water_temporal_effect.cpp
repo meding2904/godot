@@ -109,21 +109,23 @@ float water_height(vec2 xz, bool prev) {
 	return params.ocean_domain_levels.z + mix(level, ripple, inside) + ocean * texture(ocean_fade, cuv_r).r;
 }
 
-// The still surface point at uv, lifted onto the height field (2 fixed-point
-// steps). Waves move, but a plane-only reprojection is many pixels wrong at
-// a grazing angle -- the height is what keeps the history on the water.
+// The surface point at uv, lifted onto the height field (2 fixed-point steps).
+// The ray is built from two points through the inverse view-projection, which
+// also covers orthographic cameras (the editor's top/front/side views).
 vec3 surface_at(vec2 uv) {
-	vec4 world = params.inv_view_projection * vec4(uv * 2.0 - 1.0, 0.5, 1.0);
-	vec3 ray = world.xyz / world.w - params.camera_position.xyz;
-	vec3 hit = params.camera_position.xyz;
+	vec4 near = params.inv_view_projection * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+	vec4 far = params.inv_view_projection * vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+	vec3 origin = near.xyz / near.w;
+	vec3 ray = far.xyz / far.w - origin;
+	vec3 hit = origin;
 	if (abs(ray.y) < 1e-6) {
 		return hit;
 	}
-	float t = (params.ocean_domain_levels.z + params.ocean_domain_levels.w - params.camera_position.y) / ray.y;
-	hit += ray * t;
+	float t = (params.ocean_domain_levels.z + params.ocean_domain_levels.w - origin.y) / ray.y;
+	hit = origin + ray * t;
 	for (int i = 0; i < 2; i++) {
-		t = (water_height(hit.xz, false) - params.camera_position.y) / ray.y;
-		hit = params.camera_position.xyz + ray * t;
+		t = (water_height(hit.xz, false) - origin.y) / ray.y;
+		hit = origin + ray * t;
 	}
 	return hit;
 }
@@ -366,11 +368,13 @@ void WaterTemporalEffect::_render(int p_callback_type, const RenderData *p_rende
 	if (buffers->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED || buffers->get_view_count() > 1) {
 		return;
 	}
+	const ObjectID view_id = buffers->get_instance_id();
+	ViewState &view = view_states[view_id];
 	if (!buffers->has_texture(RB_SCOPE_WATER, RB_TEX_WATER_COLOR)) {
 		// No water this frame: drop the history so a later water surface does
 		// not inherit a stale frame.
-		history_valid = false;
-		have_previous_camera = false;
+		view.history_valid = false;
+		view.have_previous_camera = false;
 		return;
 	}
 	RenderingDevice *rd = RenderingServer::get_singleton()->get_rendering_device();
@@ -392,34 +396,34 @@ void WaterTemporalEffect::_render(int p_callback_type, const RenderData *p_rende
 			buffers->create_texture(RB_SCOPE_WATER, SNAME("history_a"), RD::DATA_FORMAT_R16G16B16A16_SFLOAT, usage);
 			buffers->create_texture(RB_SCOPE_WATER, SNAME("history_b"), RD::DATA_FORMAT_R16G16B16A16_SFLOAT, usage);
 			buffers->create_texture(RB_SCOPE_WATER, SNAME("temp"), RD::DATA_FORMAT_R16G16B16A16_SFLOAT, usage);
-			history_index = 0;
-			history_size = Size2i();
-			history_valid = false;
-			have_previous_camera = false;
+			view.history_index = 0;
+			view.history_size = Size2i();
+			view.history_valid = false;
+			view.have_previous_camera = false;
 		}
-		if (history_size != size) {
-			history_size = size;
-			history_valid = false;
-			have_previous_camera = false;
+		if (view.history_size != size) {
+			view.history_size = size;
+			view.history_valid = false;
+			view.have_previous_camera = false;
 		}
 
-		const RID history_rid = buffers->get_texture(RB_SCOPE_WATER, history_index == 0 ? SNAME("history_a") : SNAME("history_b"));
-		const RID history_new = buffers->get_texture(RB_SCOPE_WATER, history_index == 0 ? SNAME("history_b") : SNAME("history_a"));
+		const RID history_rid = buffers->get_texture(RB_SCOPE_WATER, view.history_index == 0 ? SNAME("history_a") : SNAME("history_b"));
+		const RID history_new = buffers->get_texture(RB_SCOPE_WATER, view.history_index == 0 ? SNAME("history_b") : SNAME("history_a"));
 		const RID temp = buffers->get_texture(RB_SCOPE_WATER, SNAME("temp"));
 
 		MutexLock lock(state_mutex);
-		if (last_ripple_height != water_data.ripple_height || last_ocean_height != water_data.ocean_height) {
-			last_ripple_height = water_data.ripple_height;
-			last_ocean_height = water_data.ocean_height;
-			history_valid = false;
-			have_previous_camera = false;
+		if (view.last_ripple_height != water_data.ripple_height || view.last_ocean_height != water_data.ocean_height) {
+			view.last_ripple_height = water_data.ripple_height;
+			view.last_ocean_height = water_data.ocean_height;
+			view.history_valid = false;
+			view.have_previous_camera = false;
 		}
 		if (surface_ready && water_data.valid) {
 			const Transform3D cam_transform = scene->get_cam_transform();
 			const Projection current_vp = scene->get_cam_projection() * Projection(cam_transform.affine_inverse());
 			ResolveParams params;
 			projection_to_float(current_vp.inverse(), params.inv_view_projection);
-			projection_to_float(previous_view_projection, params.prev_view_projection);
+			projection_to_float(view.previous_view_projection, params.prev_view_projection);
 			const Vector3 eye = cam_transform.origin;
 			params.camera_position[0] = eye.x;
 			params.camera_position[1] = eye.y;
@@ -427,7 +431,7 @@ void WaterTemporalEffect::_render(int p_callback_type, const RenderData *p_rende
 			params.camera_position[3] = 0.0f;
 			params.settings[0] = surface_y;
 			params.settings[1] = 0.85f; // history weight
-			params.settings[2] = (history_valid && have_previous_camera) ? 1.0f : 0.0f;
+			params.settings[2] = (view.history_valid && view.have_previous_camera) ? 1.0f : 0.0f;
 			params.settings[3] = 0.0f;
 			params.grid_center_ripple_domain[0] = water_data.grid_center.x;
 			params.grid_center_ripple_domain[1] = water_data.grid_center.y;
@@ -461,11 +465,11 @@ void WaterTemporalEffect::_render(int p_callback_type, const RenderData *p_rende
 				rd->compute_list_end();
 				rd->free_rid(uniform_set);
 				source = temp;
-				history_index ^= 1;
-				history_valid = true;
+				view.history_index ^= 1;
+				view.history_valid = true;
 			}
-			previous_view_projection = current_vp;
-			have_previous_camera = true;
+			view.previous_view_projection = current_vp;
+			view.have_previous_camera = true;
 		}
 	}
 
