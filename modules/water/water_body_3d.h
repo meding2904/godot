@@ -417,12 +417,15 @@ private:
 	bool screen_space = false;
 	bool temporal_aa = false;
 	bool temporal_installed = false;
+	bool temporal_warned = false;
 	ObjectID temporal_world;
 	bool auto_recenter = true;
 	bool underwater_effect = true;
 	WaterUnderwaterEffect *underwater_effect_node = nullptr;
 	void _update_underwater_node();
 	void _update_temporal_effect(bool p_exiting = false);
+	void _check_temporal_support();
+	String _make_shader_code(bool p_screen_space, bool p_temporal, bool p_mark) const;
 	void _update_temporal_state();
 	int temporal_frame = 0;
 	Ref<ImageTexture> detail_normal_tex;

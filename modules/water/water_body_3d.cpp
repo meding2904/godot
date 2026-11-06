@@ -1282,7 +1282,18 @@ void WaterBody3D::set_water_material(const Ref<ShaderMaterial> &p_material) {
 		// The node's own material can come back from a saved scene as a
 		// sub-resource: recognize it so temporal_aa/screen_space can rebuild
 		// its shader variant instead of treating it as a custom material.
-		own_material = p_material->get_shader()->get_code().contains("WaterBody3D built-in water material");
+		const String code = p_material->get_shader()->get_code();
+		if (code.contains("WaterBody3D built-in water material")) {
+			own_material = true;
+		} else {
+			// Scenes saved before the marker was added: the code is still an
+			// exact copy of one of the generated variants, so compare.
+			for (int screen = 0; screen < 2 && !own_material; screen++) {
+				for (int temporal = 0; temporal < 2 && !own_material; temporal++) {
+					own_material = code == _make_shader_code(screen != 0, temporal != 0, false);
+				}
+			}
+		}
 	}
 	if (mesh_instance != nullptr && water_material.is_valid()) {
 		mesh_instance->set_material_override(water_material);
@@ -1678,12 +1689,11 @@ void WaterBody3D::set_temporal_aa(bool p_enabled) {
 	if (temporal_aa == p_enabled) {
 		return;
 	}
-	if (p_enabled && !Engine::get_singleton()->is_editor_hint() && !own_material && water_material.is_valid()) {
-		WARN_PRINT("WaterBody3D: temporal_aa needs the built-in water material; the custom material renders unchanged.");
-	}
 	temporal_aa = p_enabled;
 	temporal_frame = 0;
+	temporal_warned = false;
 	_update_temporal_effect();
+	_check_temporal_support();
 	if (own_material) {
 		// The render_mode is compiled into the shader: rebuild the material.
 		water_material = Ref<ShaderMaterial>();
@@ -1732,6 +1742,32 @@ void WaterBody3D::_update_temporal_state() {
 	}
 }
 
+void WaterBody3D::_check_temporal_support() {
+	if (!temporal_aa || temporal_warned) {
+		return;
+	}
+	if (Engine::get_singleton()->is_editor_hint()) {
+		temporal_warned = true;
+		WARN_PRINT("WaterBody3D: temporal_aa runs in Play; the editor preview uses the normal path.");
+		return;
+	}
+	if (RenderingServer::get_singleton()->get_current_rendering_method() != "forward_plus") {
+		temporal_warned = true;
+		WARN_PRINT("WaterBody3D: temporal_aa needs the Forward+ renderer; the current renderer keeps the normal path.");
+		return;
+	}
+	const Viewport *viewport = get_viewport();
+	if (viewport != nullptr && viewport->get_msaa_3d() != Viewport::MSAA_DISABLED) {
+		temporal_warned = true;
+		WARN_PRINT("WaterBody3D: temporal_aa needs 3D MSAA disabled (rendering/anti_aliasing/quality/msaa_3d = Disabled); the water keeps the normal path.");
+		return;
+	}
+	if (!own_material && water_material.is_valid()) {
+		temporal_warned = true;
+		WARN_PRINT("WaterBody3D: temporal_aa needs the built-in water material; clear the water_material property (set it to empty) and let the node rebuild it. A custom material renders unchanged.");
+	}
+}
+
 void WaterBody3D::_update_temporal_effect(bool p_exiting) {
 	if (Engine::get_singleton()->is_editor_hint()) {
 		p_exiting = true;
@@ -1746,6 +1782,11 @@ void WaterBody3D::_update_temporal_effect(bool p_exiting) {
 		WaterTemporalEffect::install(world);
 		temporal_installed = true;
 		temporal_world = world->get_instance_id();
+	}
+	if (!p_exiting && temporal_aa) {
+		// Explain at startup why a saved temporal_aa may be inactive
+		// (editor, MSAA, renderer, custom material).
+		_check_temporal_support();
 	}
 }
 
@@ -1800,6 +1841,36 @@ void WaterBody3D::_notification(int p_what) {
 	}
 }
 
+String WaterBody3D::_make_shader_code(bool p_screen_space, bool p_temporal, bool p_mark) const {
+	String code = WATER_SHADER_SRC;
+	const String type_line = "shader_type spatial;";
+	const int type_at = code.find(type_line);
+	if (type_at < 0) {
+		return code;
+	}
+	if (p_screen_space) {
+		code = code.insert(type_at + type_line.length(), "\n#define WATER_SCREEN_SPACE");
+	}
+	if (p_temporal) {
+		const String mode_line = "render_mode blend_mix, cull_disabled, unshaded;";
+		const int mode_at = code.find(mode_line);
+		if (mode_at >= 0) {
+			code = code.replace(mode_line, "render_mode blend_mix, cull_disabled, unshaded, water_temporal;");
+		}
+		const int at = code.find(type_line);
+		if (at >= 0) {
+			code = code.insert(at + type_line.length(), "\n#define WATER_TEMPORAL");
+		}
+	}
+	if (p_mark) {
+		const int at = code.find(type_line);
+		if (at >= 0) {
+			code = code.insert(at + type_line.length(), "\n// WaterBody3D built-in water material");
+		}
+	}
+	return code;
+}
+
 void WaterBody3D::_rebuild() {
 	if (!is_inside_world()) {
 		return;
@@ -1809,53 +1880,16 @@ void WaterBody3D::_rebuild() {
 		mesh_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
 		add_child(mesh_instance, false, INTERNAL_MODE_BACK);
 	}
+	const bool want_temporal = temporal_aa && !Engine::get_singleton()->is_editor_hint();
 	if (own_material && water_material.is_valid() && water_material->get_shader().is_valid()) {
-		const String code = water_material->get_shader()->get_code();
-		const bool has_screen_space = code.contains("WATER_SCREEN_SPACE");
-		const bool has_temporal = code.contains("water_temporal");
-		const bool want_temporal = temporal_aa && !Engine::get_singleton()->is_editor_hint();
-		if (has_screen_space != screen_space || has_temporal != want_temporal) {
+		if (water_material->get_shader()->get_code() != _make_shader_code(screen_space, want_temporal, true)) {
 			water_material = Ref<ShaderMaterial>();
 		}
 	}
 	if (water_material.is_null()) {
 		Ref<Shader> shader;
 		shader.instantiate();
-		String code = WATER_SHADER_SRC;
-		if (screen_space) {
-			// After shader_type, before the rest: turns on the screen-color
-			// path (refraction). Off by default, so a plain water material
-			// never requests a screen copy.
-			const String type_line = "shader_type spatial;";
-			const int at = code.find(type_line);
-			if (at >= 0) {
-				code = code.insert(at + type_line.length(), "\n#define WATER_SCREEN_SPACE");
-			}
-		}
-		if (temporal_aa && !Engine::get_singleton()->is_editor_hint()) {
-			// Marks the material for the renderer's isolated water pass (and
-			// the water-only temporal resolve) in Play; the editor preview
-			// keeps the normal path.
-			const String mode_line = "render_mode blend_mix, cull_disabled, unshaded;";
-			const int at = code.find(mode_line);
-			if (at >= 0) {
-				code = code.replace(mode_line, "render_mode blend_mix, cull_disabled, unshaded, water_temporal;");
-			}
-			const String type_line = "shader_type spatial;";
-			const int type_at = code.find(type_line);
-			if (type_at >= 0) {
-				code = code.insert(type_at + type_line.length(), "\n#define WATER_TEMPORAL");
-			}
-		}
-		// Marks the auto-created material. Godot may serialize it into the
-		// scene with the node, and on load it then must not be mistaken for a
-		// user-provided custom material.
-		const String type_line = "shader_type spatial;";
-		const int type_at = code.find(type_line);
-		if (type_at >= 0) {
-			code = code.insert(type_at + type_line.length(), "\n// WaterBody3D built-in water material");
-		}
-		shader->set_code(code);
+		shader->set_code(_make_shader_code(screen_space, want_temporal, true));
 		Ref<ShaderMaterial> m;
 		m.instantiate();
 		m->set_shader(shader);
