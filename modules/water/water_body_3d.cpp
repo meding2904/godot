@@ -58,6 +58,10 @@
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
 
+#ifdef TOOLS_ENABLED
+#include "editor/scene/3d/node_3d_editor_plugin.h"
+#endif
+
 namespace {
 // A plain spatial Shader (Godot's own shading language, NOT the RD compute
 // shaders the rest of this module uses). Displaces the mesh's own VERTEX.y
@@ -203,6 +207,11 @@ uniform vec3 sky_ground_color = vec3(0.08, 0.14, 0.20);
 uniform float reflection_strength = 1.0;
 uniform float specular_strength = 0.45;
 uniform float specular_shininess = 480.0;
+// Geometric specular AA: how much the normal's change across one pixel widens
+// the sun glint (0 = off). A pixel whose normals vary stands for a range of
+// normals, so the highlight is the lobe convolved with that range instead of
+// a point sample that flickers between frames.
+uniform float specular_aa : hint_range(0.0, 2.0, 0.05) = 1.0;
 uniform float crest_sss = 0.6;
 uniform vec3 crest_sss_color = vec3(0.06, 0.38, 0.33);
 // Surface amplitude in meters (WaterBody3D::wave_amplitude), for normalizing
@@ -214,15 +223,25 @@ uniform sampler2D detail_normal : hint_normal, filter_linear_mipmap_anisotropic,
 uniform float detail_normal_strength = 0.35;
 uniform float detail_normal_scale = 0.35;
 uniform float detail_normal_speed = 0.35;
-// Distance (m) that selects the shading LOD tiers and band-limits the
-// material: procedural foam lace melts to its average, the waterline jitter,
-// foam and crest glow fade out, the sun glint widens and dims, the per-pixel
-// normal flattens toward up, and past _end the material skips the procedural
-// detail entirely and the geometry stops displacing (sub-pixel waves there
-// only alias the horizon). Without this, detail smaller than a distant pixel
-// shimmers.
+// Distance (m) selecting the shading LOD layers and band-limiting the
+// material: near is full; by _mid the fine detail is gone (detail normals
+// dropped, procedural foam/shore lace melted to its average, the waterline
+// jitter removed, the per-pixel normal flattened, the sun glint widened and
+// dimmed); by _end the remaining procedural foam/shore/crest terms are gone
+// and the geometry stops displacing (sub-pixel waves there only alias the
+// horizon). Without this, detail smaller than a distant pixel shimmers.
 uniform float distance_fade_start = 100.0;
+uniform float distance_fade_mid = 350.0;
 uniform float distance_fade_end = 650.0;
+// Surface-height LOD response: those three distances are the base values,
+// measured with the camera high above the surface. Skimming the water puts
+// the whole far field into a few grazing pixels (every one running the
+// fragment work, and the sub-pixel waves aliasing), so as the camera drops,
+// all three shrink toward lod_surface_scale of themselves; they ramp back to
+// full over lod_surface_height meters. Computed in lod_distances(), from the
+// drawing camera, so split viewports each get their own.
+uniform float lod_surface_scale = 0.40;
+uniform float lod_surface_height = 80.0;
 
 // 0 low (no detail normals, no crest SSS), 1 medium, 2 high. Set by
 // WaterBody3D::quality.
@@ -391,11 +410,11 @@ float foam_value_noise(vec2 p) {
 
 // Visible foam for the water resting at world_xz: the persistent foam amount,
 // eroded by fixed-to-the-water noise so it breaks into lace as it fades.
-float foam_at(vec2 world_xz, float far_filter) {
-	// LOD far tier: past distance_fade_end one lace cell is smaller than a
-	// pixel and the noise only shimmers; the foam has already faded out by
-	// then (the (1 - far_filter) fade below), so skip its fetch and noise.
-	if (far_filter > 0.995) {
+float foam_at(vec2 world_xz, float mid_filter) {
+	// LOD mid tier: past its end one lace cell is smaller than a pixel and
+	// the noise only shimmers; the foam has already faded out by then (the
+	// (1 - mid_filter) fade below), so skip its fetch and noise.
+	if (mid_filter > 0.995) {
 		return 0.0;
 	}
 	vec2 rel = world_xz - grid_center;
@@ -404,16 +423,16 @@ float foam_at(vec2 world_xz, float far_filter) {
 	float fade = fade_r(world_xz, cuv_r);
 	float amount = texture(ocean_foam_tex, cuv_o).r * fade;
 	// Wake foam at the displaced position, as surface_offset() reads the wake.
-	amount = max(amount, wake_foam(world_xz - choppiness * fade * texture(ocean_disp_tex, cuv_o).rg) * (1.0 - far_filter));
+	amount = max(amount, wake_foam(world_xz - choppiness * fade * texture(ocean_disp_tex, cuv_o).rg) * (1.0 - mid_filter));
 	vec2 p = world_xz * foam_detail_scale;
 	float n = 0.5 * foam_value_noise(p) + 0.3 * foam_value_noise(p * 2.7 + 17.0) + 0.2 * foam_value_noise(p * 7.3 - 5.0);
 	// Past a few hundred meters one noise cell is smaller than a pixel: use
 	// its average instead of its loop, or the lace shimmers as you move.
-	n = mix(n, 0.5, far_filter);
+	n = mix(n, 0.5, mid_filter);
 	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and
 	// lacy as the noise eats into it, rather than cutting off at an edge.
 	float f = clamp(amount * (1.0 + foam_breakup) - n * foam_breakup, 0.0, 1.0);
-	return f * f * (3.0 - 2.0 * f) * (1.0 - far_filter);
+	return f * f * (3.0 - 2.0 * f) * (1.0 - mid_filter);
 }
 
 // Visible shore foam at world_xz: finer, heavier lace at partial strength.
@@ -429,35 +448,35 @@ vec2 shore_pattern_uv(vec2 world_xz) {
 	return 1.0 - abs(mod(u, 2.0) - 1.0);
 }
 
-float shore_foam_at(vec2 world_xz, float far_filter) {
-	// LOD far tier: the sheet is sub-pixel there and its lace only shimmers.
-	if (far_filter > 0.995) {
+float shore_foam_at(vec2 world_xz, float mid_filter) {
+	// LOD mid tier: the sheet is sub-pixel there and its lace only shimmers.
+	if (mid_filter > 0.995) {
 		return 0.0;
 	}
 	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 q = world_xz * foam_detail_scale * 2.2 + 31.0;
 	float ns = 0.5 * foam_value_noise(q) + 0.5 * foam_value_noise(q * 2.3 - 11.0);
-	ns = mix(ns, 0.5, far_filter);
+	ns = mix(ns, 0.5, mid_filter);
 	float shore = texture(shore_foam_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
 	float g = clamp(shore * (1.0 + shore_foam_breakup) - ns * shore_foam_breakup, 0.0, 1.0);
-	return g * g * (3.0 - 2.0 * g) * shore_foam_strength * (1.0 - far_filter);
+	return g * g * (3.0 - 2.0 * g) * shore_foam_strength * (1.0 - mid_filter);
 }
 
 // Water depth (m) above the moving waterline: the still-water depth minus an
 // offset in [0, swash_reach] -- small under an arriving crest (the edge
 // reaches in), large between crests, jittered by slow noise. <= 0 is past
 // the visible edge.
-float shore_signal(vec2 world_xz, float time, float far_filter) {
+float shore_signal(vec2 world_xz, float time, float mid_filter) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 cuv_o = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic -- anchored to the WORLD, so moving grid_center (a re-centre) never slides the waves
 	float depth = depth_r(world_xz, cuv_r);
 	float run_up = texture(swash_tex, shore_pattern_uv(world_xz)).r * (1.0 - beyond_w(world_xz));
-	// LOD far tier: both noise fields are sub-pixel past distance_fade_end
-	// (their effect was already mixed away at far_filter 1) -- skip them.
+	// LOD mid tier: both noise fields are sub-pixel past its end distance
+	// (their effect was already mixed away at mid_filter 1) -- skip them.
 	float offset = 0.0;
 	float jitter = 0.0;
-	if (far_filter < 0.995) {
+	if (mid_filter < 0.995) {
 		float eta = texture(ocean_height_tex, cuv_o).r; // unfaded: the waves arriving here
 		// Lobes a few meters across (like real swash), drifting, with the waves
 		// pushing the whole edge in and out over time.
@@ -469,8 +488,8 @@ float shore_signal(vec2 world_xz, float time, float far_filter) {
 		float eb = 0.5 * foam_value_noise(q * 2.3 + vec2(time * 0.25, 0.0)) + 0.3 * foam_value_noise(q * 6.1 + vec2(3.0, time * 0.4)) + 0.2 * foam_value_noise(q * 15.0 - 7.0);
 		// Far away, one cell of either noise is sub-pixel: drop the jitter, or
 		// the waterline crawls as the camera moves.
-		offset *= 1.0 - far_filter;
-		eb = mix(eb, 0.5, far_filter);
+		offset *= 1.0 - mid_filter;
+		eb = mix(eb, 0.5, mid_filter);
 		jitter = (eb - 0.5) * 2.0 * swash_edge_breakup;
 		// On dry sand the jitter may only pull the edge back, never add water
 		// past what the swash covers -- or it left a permanent fringe of rim
@@ -487,13 +506,13 @@ float shore_signal(vec2 world_xz, float time, float far_filter) {
 // The sky seen along a reflected direction: a horizon-to-zenith gradient, the
 // ground color below the horizon, and a sun glow. Bounded by construction --
 // this material is alpha blended on top of an already lit scene.
-vec3 sky_reflection(vec3 dir, float far_filter) {
+vec3 sky_reflection(vec3 dir, float mid_filter) {
 	vec3 L = normalize(sun_direction);
 	float up = clamp(dir.y, 0.0, 1.0);
 	vec3 c = mix(sky_horizon_color, sky_zenith_color, pow(up, 0.55));
 	c = mix(c, sky_ground_color, smoothstep(0.0, 0.25, -dir.y));
 	float glow = pow(max(dot(dir, L), 0.0), 220.0);
-	c += sun_color * (glow * 1.5 * (1.0 - 0.8 * far_filter));
+	c += sun_color * (glow * 1.5 * (1.0 - 0.8 * mid_filter));
 	return c;
 }
 
@@ -514,23 +533,42 @@ float view_thickness(vec2 screen_uv, mat4 inv_projection, float fragment_distanc
 	return max(length(scene_view) - fragment_distance, 0.0);
 }
 
-// 0 up close, 1 at distance_fade_end and beyond.
-float distance_filter(float p_distance) {
-	return smoothstep(distance_fade_start, distance_fade_end, p_distance);
+// The three distance_fade_* thresholds as this view's height above the
+// surface scales them: at the waterline detail stops at lod_surface_scale of
+// the way out, and is fully restored lod_surface_height meters up. (A grazing
+// view packs the far sea into few pixels -- the stretched fragments alias and
+// overdraw, so a lower eye cuts them off sooner.) The height is passed in
+// because a shader built-in cannot be read from a helper function.
+vec3 lod_distances(float p_above) {
+	float scale = mix(lod_surface_scale, 1.0, smoothstep(0.0, max(lod_surface_height, 0.001), p_above));
+	float start = distance_fade_start * scale;
+	float end = max(distance_fade_end * scale, start + 2.0);
+	float mid = clamp(distance_fade_mid * scale, start + 1.0, end - 1.0);
+	return vec3(start, mid, end);
+}
+
+// The three LOD layers for a point p_distance away: x is the mid layer's
+// filter (fine detail and per-pixel normals gone at 1, from _start to _mid),
+// y is the far layer's (procedural foam/shore/crest and displaced geometry
+// gone at 1, from _mid to _end). Both are smooth, so the layers hand over
+// without a band.
+vec2 lod_filters(float p_distance, float p_above) {
+	vec3 lod = lod_distances(p_above);
+	return vec2(smoothstep(lod.x, lod.y, p_distance), smoothstep(lod.y, lod.z, p_distance));
 }
 
 // Fine detail normals from the scrolling normal map, applied in a world-space
 // tangent frame (the FFT's own slopes supply the large-scale normal).
-vec3 detail_normal_perturb(vec3 world_normal, vec2 world_xz, float far_filter) {
-	// LOD: past distance_fade_end the map is sub-pixel (the wave normal is
+vec3 detail_normal_perturb(vec3 world_normal, vec2 world_xz, float mid_filter) {
+	// LOD mid layer: past its end the map is sub-pixel (the wave normal is
 	// flattened there anyway); past the halfway mark one layer is enough.
-	if (shading_quality < 1 || far_filter > 0.995) {
+	if (shading_quality < 1 || mid_filter > 0.995) {
 		return world_normal;
 	}
 	vec2 scroll = vec2(0.62, 0.78) * (water_time * detail_normal_speed);
 	vec2 uv = world_xz * detail_normal_scale + scroll;
 	vec3 nm = texture(detail_normal, uv).xyz * 2.0 - 1.0;
-	if (shading_quality >= 2 && far_filter < 0.5) {
+	if (shading_quality >= 2 && mid_filter < 0.5) {
 		vec3 nm2 = texture(detail_normal, uv * 3.3 - scroll * 1.7 + vec2(0.31)).xyz * 2.0 - 1.0;
 		nm.xy = (nm.xy + nm2.xy) * 0.5;
 	}
@@ -546,12 +584,15 @@ void vertex() {
 	VERTEX += (inverse(MODEL_MATRIX) * vec4(mesh_offset.x, 0.0, mesh_offset.y, 0.0)).xyz;
 	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_rest_xz = world_pos.xz;
-	// Vertex LOD: the geometry has flattened to the still level by
-	// distance_fade_end; keeping sub-pixel waves there only aliases the
-	// horizon silhouette. Computed here where the camera built-in is in the
-	// vertex stage.
-	float geom_far = smoothstep(distance_fade_start, distance_fade_end, distance(CAMERA_POSITION_WORLD, world_pos));
-	VERTEX += surface_offset(world_pos.xz, geom_far);
+	// Vertex LOD: the displaced geometry flattens with the mid layer (fine
+	// detail gone by _mid); keeping sub-pixel waves out there only aliases
+	// the silhouette, and the mid distance is already cut right in when the
+	// eye skims the water. The far layer finishes the remaining shading.
+	// Computed here where the camera built-in is in the vertex stage.
+	float surface_above = abs(CAMERA_POSITION_WORLD.y - (MODEL_MATRIX[3].y + water_level));
+	vec2 lod = lod_filters(distance(CAMERA_POSITION_WORLD, world_pos), surface_above);
+	float geom_fade = lod.x;
+	VERTEX += surface_offset(world_pos.xz, geom_fade);
 	v_world_normal = vec3(0.0, 1.0, 0.0);
 	v_foam = 0.0;
 	// Per pixel, fragment() computes the normal and foam instead.
@@ -560,14 +601,14 @@ void vertex() {
 		// surface -- e is in world meters, small against the grids' cell
 		// size.
 		const float e = 0.2;
-		vec3 px1 = vec3(e, 0.0, 0.0) + surface_offset(world_pos.xz + vec2(e, 0.0), geom_far);
-		vec3 px0 = vec3(-e, 0.0, 0.0) + surface_offset(world_pos.xz - vec2(e, 0.0), geom_far);
-		vec3 pz1 = vec3(0.0, 0.0, e) + surface_offset(world_pos.xz + vec2(0.0, e), geom_far);
-		vec3 pz0 = vec3(0.0, 0.0, -e) + surface_offset(world_pos.xz - vec2(0.0, e), geom_far);
+		vec3 px1 = vec3(e, 0.0, 0.0) + surface_offset(world_pos.xz + vec2(e, 0.0), geom_fade);
+		vec3 px0 = vec3(-e, 0.0, 0.0) + surface_offset(world_pos.xz - vec2(e, 0.0), geom_fade);
+		vec3 pz1 = vec3(0.0, 0.0, e) + surface_offset(world_pos.xz + vec2(0.0, e), geom_fade);
+		vec3 pz0 = vec3(0.0, 0.0, -e) + surface_offset(world_pos.xz - vec2(0.0, e), geom_fade);
 		vec3 tx = px1 - px0;
 		vec3 tz = pz1 - pz0;
 		v_world_normal = normalize(cross(tz, tx));
-		v_foam = foam_at(world_pos.xz, distance_filter(distance(CAMERA_POSITION_WORLD, world_pos)));
+		v_foam = foam_at(world_pos.xz, lod.x);
 	}
 }
 
@@ -585,19 +626,25 @@ void fragment() {
 	}
 	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	vec3 to_camera = normalize(CAMERA_POSITION_WORLD - wp);
-	float far_filter = distance_filter(distance(CAMERA_POSITION_WORLD, wp));
+	float surface_above = abs(CAMERA_POSITION_WORLD.y - (MODEL_MATRIX[3].y + water_level));
+	vec2 lod = lod_filters(distance(CAMERA_POSITION_WORLD, wp), surface_above);
+	float mid_filter = lod.x;
+	float far_filter = lod.y;
 	vec3 world_normal = v_world_normal;
 	float foam = v_foam;
-	if (per_pixel_normals) {
+	// LOD mid layer: once the normal is fully flat and the foam has faded,
+	// the per-pixel FFT/ripple/wake normal fetch (and its foam) is skipped
+	// outright -- it is the widest part of a grazing view.
+	if (per_pixel_normals && mid_filter < 0.995) {
 		world_normal = surface_normal_pixel(v_rest_xz);
-		foam = foam_at(v_rest_xz, far_filter);
+		foam = foam_at(v_rest_xz, mid_filter);
 	}
 	// Shading frame, facing the camera (from below the geometric normal
 	// points away): every term below assumes the lit side.
 	vec3 shade_normal = dot(world_normal, to_camera) < 0.0 ? -world_normal : world_normal;
-	shade_normal = detail_normal_perturb(shade_normal, v_rest_xz, far_filter);
+	shade_normal = detail_normal_perturb(shade_normal, v_rest_xz, mid_filter);
 	// Sub-pixel waves average out at distance; flatten instead of aliasing.
-	shade_normal = normalize(mix(shade_normal, vec3(0.0, 1.0, 0.0), far_filter));
+	shade_normal = normalize(mix(shade_normal, vec3(0.0, 1.0, 0.0), mid_filter));
 	vec3 sun = normalize(sun_direction);
 
 	if (!camera_above) {
@@ -609,7 +656,7 @@ void fragment() {
 		float cos_i = clamp(dot(-to_camera, world_normal), 0.0, 1.0);
 		float critical_cos = 0.6614;
 		float window = smoothstep(critical_cos, critical_cos + 0.07, cos_i);
-		vec3 reflected = sky_reflection(reflect(-to_camera, shade_normal), far_filter);
+		vec3 reflected = sky_reflection(reflect(-to_camera, shade_normal), mid_filter);
 		vec3 body = deep_color.rgb * (1.0 - 0.35 * window);
 		ALBEDO = mix(body, reflected, window);
 		ALPHA = 1.0;
@@ -631,24 +678,24 @@ void fragment() {
 	vec3 half_dir = normalize(sun_view + view_dir);
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
 	float sun_up = clamp(dot(shade_normal, sun), 0.0, 1.0);
-	float shore = shore_signal(v_rest_xz, water_time, far_filter);
+	float shore = shore_signal(v_rest_xz, water_time, mid_filter);
 	// Shore foam belongs to the moving edge: full at it, thinning over the
 	// next ~0.6 m of depth, so the white sheet scallops with the edge instead
 	// of filling the band. (Whitecaps are left alone.)
-	foam = max(foam, shore_foam_at(v_rest_xz, far_filter) * (1.0 - smoothstep(0.02, 0.6, shore)));
+	foam = max(foam, shore_foam_at(v_rest_xz, mid_filter) * (1.0 - smoothstep(0.02, 0.6, shore)));
 	// Bright rim right behind the moving edge, broken into lace.
 	// Over dry sand the swash film is only as thick as the run-up's excess
 	// over the sand -- a few cm -- so it fades in over a fifth of the
 	// softness there, or the uprush would barely show.
 	vec2 cuv_here = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float soft = max(shore_edge_softness, 1e-3) * mix(0.2, 1.0, smoothstep(-0.05, 0.1, depth_r(v_rest_xz, cuv_here)));
-	soft *= mix(1.0, 2.5, far_filter); // a distant waterline covers several pixels
+	soft *= mix(1.0, 2.5, mid_filter); // a distant waterline covers several pixels
 	float rim = 0.0;
-	if (far_filter < 0.995) {
-		// LOD far tier: a distant waterline is thinner than a pixel, so the
+	if (mid_filter < 0.995) {
+		// LOD mid layer: a distant waterline is thinner than a pixel, so the
 		// rim and its lace only shimmer. Fade it before the cutoff.
 		rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
-		rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale)) * (1.0 - far_filter);
+		rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale)) * (1.0 - mid_filter);
 	}
 	foam = max(foam, rim);
 	vec2 cuv_fade = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
@@ -667,29 +714,41 @@ void fragment() {
 	base_a = clamp(base_a + absorb * 0.30, 0.0, 1.0);
 
 	// Sky reflection at grazing angles (Fresnel) and the sun's glitter.
-	vec3 reflected = sky_reflection(reflect(-to_camera, shade_normal), far_filter);
+	vec3 reflected = sky_reflection(reflect(-to_camera, shade_normal), mid_filter);
 	float fresnel = 0.02 + 0.98 * pow(1.0 - clamp(dot(shade_normal, to_camera), 0.0, 1.0), 5.0);
 	float reflection_amt = fresnel * reflection_strength;
 	vec3 specular = vec3(0.0);
 	if (shading_quality >= 1) {
-		// A distant glint is smaller than a pixel: widen the lobe and dim it,
-		// which is what a properly filtered highlight looks like.
-		float shininess = mix(specular_shininess, 90.0, far_filter);
-		float glint_fade = 1.0 - 0.7 * far_filter;
+		// The mid LOD layer widens the glint to the far layer's width; the
+		// far layer then dims what is left. Combined with the geometric AA
+		// below, a sub-pixel highlight ends as a soft, faint band.
+		float dist_shininess = mix(specular_shininess, 90.0, mid_filter);
+		// Geometric specular AA: the pixel's normal varies, so it sees a
+		// spread of normals, not one. Variances add on the Blinn-Phong lobe
+		// (alpha^2 = 2 / (shininess + 2)), so widen the exponent by the
+		// pixel's normal variance instead of sampling a point that sparkles
+		// as the waves move under it. Derivatives are taken from the
+		// view-space normal actually used for the glint.
+		float normal_var = 0.25 * (dot(dFdx(n), dFdx(n)) + dot(dFdy(n), dFdy(n)));
+		float filtered_shininess = 2.0 / (2.0 / (dist_shininess + 2.0) + normal_var * specular_aa) - 2.0;
+		float shininess = max(min(dist_shininess, filtered_shininess), 1.0);
+		// A wider lobe peaks lower: scale by the normalized lobe's peak so the
+		// widening spreads the highlight rather than brightening more pixels.
+		float glint_fade = (1.0 - 0.7 * mid_filter) * (1.0 - 0.5 * far_filter) * min(1.0, (shininess + 2.0) / (dist_shininess + 2.0));
 		float spec = pow(clamp(dot(n, half_dir), 0.0, 1.0), shininess);
 		spec = clamp(spec * specular_strength * (0.3 + 0.7 * sun_up) * min(sun_energy, 2.0) * 2.0 * glint_fade, 0.0, 2.0);
 		specular = sun_color * spec;
 	}
 	base_rgb = mix(base_rgb, reflected, reflection_amt) + specular;
 	base_a = clamp(base_a + reflection_amt * 0.6, 0.0, 1.0);
-	if (shading_quality >= 2 && far_filter < 0.995) {
+	if (shading_quality >= 2 && mid_filter < 0.995) {
 		// Sun through a backlit crest: a dark green glow, bounded to a tint.
 		// LOD: the crest is sub-pixel far away; fade it out before the cutoff
 		// so the switch is invisible.
 		float crest = texture(ocean_height_tex, v_rest_xz / ocean_domain_size + 0.5).r;
 		float crest_up = clamp(crest / max(wave_amplitude, 0.05), 0.0, 1.0);
 		float back = pow(clamp(dot(-to_camera, sun) * 0.5 + 0.5, 0.0, 1.0), 2.0);
-		base_rgb += crest_sss_color * (crest_up * crest_up * back * crest_sss) * (1.0 - far_filter);
+		base_rgb += crest_sss_color * (crest_up * crest_up * back * crest_sss) * (1.0 - mid_filter);
 	}
 
 #ifdef WATER_SCREEN_SPACE
@@ -881,6 +940,20 @@ void WaterBody3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_water_material"), &WaterBody3D::get_water_material);
 	ClassDB::bind_method(D_METHOD("set_quality", "quality"), &WaterBody3D::set_quality);
 	ClassDB::bind_method(D_METHOD("get_quality"), &WaterBody3D::get_quality);
+	ClassDB::bind_method(D_METHOD("set_lod_quality", "quality"), &WaterBody3D::set_lod_quality);
+	ClassDB::bind_method(D_METHOD("get_lod_quality"), &WaterBody3D::get_lod_quality);
+	ClassDB::bind_method(D_METHOD("set_lod_distance_start", "distance"), &WaterBody3D::set_lod_distance_start);
+	ClassDB::bind_method(D_METHOD("get_lod_distance_start"), &WaterBody3D::get_lod_distance_start);
+	ClassDB::bind_method(D_METHOD("set_lod_distance_mid", "distance"), &WaterBody3D::set_lod_distance_mid);
+	ClassDB::bind_method(D_METHOD("get_lod_distance_mid"), &WaterBody3D::get_lod_distance_mid);
+	ClassDB::bind_method(D_METHOD("set_lod_distance_end", "distance"), &WaterBody3D::set_lod_distance_end);
+	ClassDB::bind_method(D_METHOD("get_lod_distance_end"), &WaterBody3D::get_lod_distance_end);
+	ClassDB::bind_method(D_METHOD("set_lod_surface_scale", "scale"), &WaterBody3D::set_lod_surface_scale);
+	ClassDB::bind_method(D_METHOD("get_lod_surface_scale"), &WaterBody3D::get_lod_surface_scale);
+	ClassDB::bind_method(D_METHOD("set_lod_surface_height", "height"), &WaterBody3D::set_lod_surface_height);
+	ClassDB::bind_method(D_METHOD("get_lod_surface_height"), &WaterBody3D::get_lod_surface_height);
+	ClassDB::bind_method(D_METHOD("set_lod_mesh_growth", "growth"), &WaterBody3D::set_lod_mesh_growth);
+	ClassDB::bind_method(D_METHOD("get_lod_mesh_growth"), &WaterBody3D::get_lod_mesh_growth);
 	ClassDB::bind_method(D_METHOD("set_sun_path", "path"), &WaterBody3D::set_sun_path);
 	ClassDB::bind_method(D_METHOD("get_sun_path"), &WaterBody3D::get_sun_path);
 	ClassDB::bind_method(D_METHOD("set_screen_space", "enabled"), &WaterBody3D::set_screen_space);
@@ -916,6 +989,11 @@ void WaterBody3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(QUALITY_MEDIUM);
 	BIND_ENUM_CONSTANT(QUALITY_HIGH);
 	BIND_ENUM_CONSTANT(QUALITY_CUSTOM);
+	BIND_ENUM_CONSTANT(LOD_QUALITY_ULTRA);
+	BIND_ENUM_CONSTANT(LOD_QUALITY_HIGH);
+	BIND_ENUM_CONSTANT(LOD_QUALITY_MEDIUM);
+	BIND_ENUM_CONSTANT(LOD_QUALITY_LOW);
+	BIND_ENUM_CONSTANT(LOD_QUALITY_CUSTOM);
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "surface_mesh", PROPERTY_HINT_RESOURCE_TYPE, "Mesh"), "set_surface_mesh", "get_surface_mesh");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "domain_size"), "set_domain_size", "get_domain_size");
@@ -956,6 +1034,15 @@ void WaterBody3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "screen_space"), "set_screen_space", "get_screen_space");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_recenter"), "set_auto_recenter", "get_auto_recenter");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "underwater_effect"), "set_underwater_effect", "get_underwater_effect");
+
+	ADD_GROUP("LOD", "lod_");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "lod_quality", PROPERTY_HINT_ENUM, "Ultra,High,Medium,Low,Custom"), "set_lod_quality", "get_lod_quality");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_distance_start", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_lod_distance_start", "get_lod_distance_start");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_distance_mid", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_lod_distance_mid", "get_lod_distance_mid");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_distance_end", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m"), "set_lod_distance_end", "get_lod_distance_end");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_surface_scale", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_lod_surface_scale", "get_lod_surface_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_surface_height", PROPERTY_HINT_RANGE, "0,1000,1,or_greater,suffix:m"), "set_lod_surface_height", "get_lod_surface_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_mesh_growth", PROPERTY_HINT_RANGE, "1.01,2,0.01"), "set_lod_mesh_growth", "get_lod_mesh_growth");
 
 	ADD_GROUP("Sun", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_path", "get_sun_path");
@@ -1201,6 +1288,139 @@ void WaterBody3D::_apply_quality() {
 	}
 }
 
+void WaterBody3D::set_lod_quality(LODQuality p_quality) {
+	if (lod_quality == p_quality) {
+		return;
+	}
+	lod_quality = p_quality;
+	_apply_lod_quality();
+	notify_property_list_changed();
+}
+
+void WaterBody3D::_apply_lod_quality() {
+	const float previous_growth = lod_mesh_growth;
+	switch (lod_quality) {
+		case LOD_QUALITY_ULTRA:
+			lod_distance_start = 150.0f;
+			lod_distance_mid = 450.0f;
+			lod_distance_end = 900.0f;
+			lod_surface_scale = 0.55f;
+			lod_surface_height = 120.0f;
+			lod_mesh_growth = 1.1f;
+			break;
+		case LOD_QUALITY_HIGH:
+			lod_distance_start = 100.0f;
+			lod_distance_mid = 350.0f;
+			lod_distance_end = 650.0f;
+			lod_surface_scale = 0.40f;
+			lod_surface_height = 80.0f;
+			lod_mesh_growth = 1.15f;
+			break;
+		case LOD_QUALITY_MEDIUM:
+			lod_distance_start = 70.0f;
+			lod_distance_mid = 230.0f;
+			lod_distance_end = 420.0f;
+			lod_surface_scale = 0.32f;
+			lod_surface_height = 60.0f;
+			lod_mesh_growth = 1.25f;
+			break;
+		case LOD_QUALITY_LOW:
+			lod_distance_start = 45.0f;
+			lod_distance_mid = 140.0f;
+			lod_distance_end = 260.0f;
+			lod_surface_scale = 0.22f;
+			lod_surface_height = 40.0f;
+			lod_mesh_growth = 1.4f;
+			break;
+		case LOD_QUALITY_CUSTOM:
+			return;
+	}
+	_apply_lod_shading();
+	if (!Math::is_equal_approx(lod_mesh_growth, previous_growth)) {
+		_rebuild(); // the ring spacing is baked into the mesh
+	}
+}
+
+void WaterBody3D::_apply_lod_shading() {
+	if (water_material.is_null()) {
+		return;
+	}
+	water_material->set_shader_parameter("distance_fade_start", lod_distance_start);
+	water_material->set_shader_parameter("distance_fade_mid", lod_distance_mid);
+	water_material->set_shader_parameter("distance_fade_end", lod_distance_end);
+	water_material->set_shader_parameter("lod_surface_scale", lod_surface_scale);
+	water_material->set_shader_parameter("lod_surface_height", lod_surface_height);
+}
+
+void WaterBody3D::_mark_lod_custom() {
+	if (lod_quality == LOD_QUALITY_CUSTOM) {
+		return;
+	}
+	// A hand-tuned dial is no longer any preset's settings.
+	lod_quality = LOD_QUALITY_CUSTOM;
+	notify_property_list_changed();
+}
+
+void WaterBody3D::set_lod_distance_start(float p_distance) {
+	p_distance = MAX(p_distance, 0.0f);
+	if (lod_distance_start == p_distance) {
+		return;
+	}
+	lod_distance_start = p_distance;
+	_mark_lod_custom();
+	_apply_lod_shading();
+}
+
+void WaterBody3D::set_lod_distance_mid(float p_distance) {
+	p_distance = MAX(p_distance, 0.0f);
+	if (lod_distance_mid == p_distance) {
+		return;
+	}
+	lod_distance_mid = p_distance;
+	_mark_lod_custom();
+	_apply_lod_shading();
+}
+
+void WaterBody3D::set_lod_distance_end(float p_distance) {
+	p_distance = MAX(p_distance, 0.0f);
+	if (lod_distance_end == p_distance) {
+		return;
+	}
+	lod_distance_end = p_distance;
+	_mark_lod_custom();
+	_apply_lod_shading();
+}
+
+void WaterBody3D::set_lod_surface_scale(float p_scale) {
+	p_scale = CLAMP(p_scale, 0.0f, 1.0f);
+	if (lod_surface_scale == p_scale) {
+		return;
+	}
+	lod_surface_scale = p_scale;
+	_mark_lod_custom();
+	_apply_lod_shading();
+}
+
+void WaterBody3D::set_lod_surface_height(float p_height) {
+	p_height = MAX(p_height, 0.0f);
+	if (lod_surface_height == p_height) {
+		return;
+	}
+	lod_surface_height = p_height;
+	_mark_lod_custom();
+	_apply_lod_shading();
+}
+
+void WaterBody3D::set_lod_mesh_growth(float p_growth) {
+	p_growth = CLAMP(p_growth, 1.01f, 2.0f);
+	if (lod_mesh_growth == p_growth) {
+		return;
+	}
+	lod_mesh_growth = p_growth;
+	_mark_lod_custom();
+	_rebuild();
+}
+
 void WaterBody3D::set_sun_path(const NodePath &p_path) {
 	sun_path = p_path;
 	sun_light = nullptr;
@@ -1377,6 +1597,7 @@ void WaterBody3D::_apply_shading_settings() {
 	if (quality != QUALITY_CUSTOM) {
 		water_material->set_shader_parameter("shading_quality", (int)quality);
 	}
+	_apply_lod_shading();
 	_update_sky_colors();
 	_resolve_sun();
 	_update_sun();
@@ -1473,9 +1694,7 @@ void WaterBody3D::_notification(int p_what) {
 			_update(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
-			if (!Engine::get_singleton()->is_editor_hint()) {
-				_update_mesh_offset();
-			}
+			_update_mesh_offset();
 		} break;
 	}
 }
@@ -1542,7 +1761,7 @@ void WaterBody3D::_rebuild() {
 		}
 	}
 	if (water_mesh.is_null() && render_extent > MAX(ocean_domain_size.x, ocean_domain_size.y)) {
-		water_mesh = _build_extended_plane(ocean_domain_size, ocean_grid_resolution, render_extent);
+		water_mesh = _build_extended_plane(ocean_domain_size, ocean_grid_resolution, render_extent, lod_mesh_growth);
 	}
 	if (water_mesh.is_null()) {
 		Ref<PlaneMesh> plane;
@@ -1714,14 +1933,27 @@ void WaterBody3D::_update_mesh_offset() {
 	}
 	const Viewport *vp = get_viewport();
 	const Camera3D *cam = vp != nullptr ? vp->get_camera_3d() : nullptr;
+#ifdef TOOLS_ENABLED
+	// Editing: the camera the author actually looks through is the 3D view
+	// last used -- each split view has its own camera, and the edited scene
+	// only lives in viewport 0.
+	if (Engine::get_singleton()->is_editor_hint() && Node3DEditor::get_singleton() != nullptr) {
+		Node3DEditorViewport *view = Node3DEditor::get_singleton()->get_last_used_viewport();
+		if (view != nullptr && view->get_camera_3d() != nullptr && view->get_camera_3d()->get_world_3d() == get_world_3d()) {
+			cam = view->get_camera_3d();
+		}
+	}
+#endif
 	if (cam == nullptr) {
 		return;
 	}
 	const Vector3 cp = cam->get_global_position();
 	// Endless sea out of the box: carry the interactive ripple square (and the
 	// node) along with the camera. The FFT ocean is world-anchored, so only
-	// local ripples are cleared; no rebuild on this path.
-	if (auto_recenter && solver.is_available() && !seabed_from_floor && cell_depth.is_empty()) {
+	// local ripples are cleared; no rebuild on this path. Not in the editor:
+	// moving (and rebuilding) the authored node because the author panned is
+	// not a preview -- the mesh offset below is.
+	if (!Engine::get_singleton()->is_editor_hint() && auto_recenter && solver.is_available() && !seabed_from_floor && cell_depth.is_empty()) {
 		if (Vector2(cp.x, cp.z).distance_squared_to(grid_center) > 100.0f) {
 			recenter(cp);
 		}
@@ -2078,19 +2310,21 @@ PackedByteArray WaterBody3D::_rasterize_wet_mask(const Vector<Vector2> &p_tris, 
 	return mask;
 }
 
-Ref<Mesh> WaterBody3D::_build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent) const {
+Ref<Mesh> WaterBody3D::_build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent, real_t p_growth) const {
 	// A regular grid of (2K+1)^2 vertices whose square rings are spread out
 	// from the center: rings up to K0 are the simulated span at uniform
-	// spacing, and each ring past it is 15% further out than the step before
-	// -- detail where the waves are simulated, a few hundred rings out to the
-	// horizon. Spacing grows with the ring (distance from the center), the
-	// same along X and Z. (A per-axis spacing left the simulated span's fine
-	// columns/rows running out to the horizon as two strips of fine mesh
-	// along the axes, and the same waves looked different either side of
-	// each strip's edge: a seam straight out to sea.)
+	// spacing, and each ring past it is p_growth further out than the step
+	// before (lod_mesh_growth, 1.15 by default) -- detail where the waves are
+	// simulated, a few hundred rings out to the horizon. Spacing grows with
+	// the ring (distance from the center), the same along X and Z. (A per-axis
+	// spacing left the simulated span's fine columns/rows running out to the
+	// horizon as two strips of fine mesh along the axes, and the same waves
+	// looked different either side of each strip's edge: a seam straight out
+	// to sea.)
 	const int k0 = MAX(p_inner_cells / 2, 1);
 	const Vector2 half_inner = p_inner * 0.5f;
 	const real_t max_half = MAX(half_inner.x, half_inner.y);
+	const real_t growth = MAX(p_growth, 1.01f);
 	// radius[c]: ring c's half-size, in units of the inner step (ring c <= k0: c).
 	LocalVector<real_t> radius;
 	for (int c = 0; c <= k0; c++) {
@@ -2101,7 +2335,7 @@ Ref<Mesh> WaterBody3D::_build_extended_plane(Vector2 p_inner, int p_inner_cells,
 		real_t r = (real_t)k0;
 		real_t step = 1.0f;
 		while (r < limit) {
-			step *= 1.15f;
+			step *= growth;
 			r = MIN(r + step, limit);
 			radius.push_back(r);
 		}

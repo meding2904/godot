@@ -166,6 +166,27 @@
 		<member name="grid_resolution" type="int" setter="set_grid_resolution" getter="get_grid_resolution" default="128">
 			Cell count per side of the local ripple layer's grid. Not required to be a power of two, unlike [member ocean_grid_resolution].
 		</member>
+		<member name="lod_distance_start" type="float" setter="set_lod_distance_start" getter="get_lod_distance_start" default="100.0">
+			Distance in meters where the mid LOD layer begins: one detail-normal layer instead of two, foam/shore lace toward its average, the waterline jitter dropped, the per-pixel normal starting to flatten and the sun glint widening. Measured with a camera high above the surface; see [member lod_surface_scale] and [member lod_surface_height] for the height response.
+		</member>
+		<member name="lod_distance_mid" type="float" setter="set_lod_distance_mid" getter="get_lod_distance_mid" default="350.0">
+			Distance in meters where the mid LOD layer is complete and the far layer begins: the per-pixel FFT/ripple/wake normal fetch is skipped (normals are flat), foam/shore lace and the waterline rim have faded out, and the displaced geometry has flattened to the still level (its waves are sub-pixel from here out). Measured with a camera high above the surface; see [member lod_surface_scale] and [member lod_surface_height] for the height response.
+		</member>
+		<member name="lod_distance_end" type="float" setter="set_lod_distance_end" getter="get_lod_distance_end" default="650.0">
+			Distance in meters where the far LOD layer is complete: the crest glow, remaining foam/shore lace and swash noise are skipped and the sky-reflection glow is fully faded; the shading is then the flat analytic water, with nothing left to shimmer. Measured with a camera high above the surface; see [member lod_surface_scale] and [member lod_surface_height] for the height response.
+		</member>
+		<member name="lod_mesh_growth" type="float" setter="set_lod_mesh_growth" getter="get_lod_mesh_growth" default="1.15">
+			Spacing growth per ring of the open-water mesh past the simulated square, out to [member render_extent]: [code]1.0[/code] would be uniform spacing, higher values spread each ring further than the last and spend fewer vertices between the dense core and the horizon. Rebuilds the surface mesh when changed. Ignored with a [member surface_mesh] or a [member render_extent] that doesn't extend past the simulated square.
+		</member>
+		<member name="lod_quality" type="int" setter="set_lod_quality" getter="get_lod_quality" enum="WaterBody3D.LODQuality" default="1">
+			Preset for the distance LOD dials: [constant LOD_QUALITY_ULTRA], [constant LOD_QUALITY_HIGH] (the default), [constant LOD_QUALITY_MEDIUM], [constant LOD_QUALITY_LOW], or [constant LOD_QUALITY_CUSTOM] to leave the [code]lod_*[/code] dials as authored. Selecting a preset sets [member lod_distance_start], [member lod_distance_mid], [member lod_distance_end], [member lod_surface_scale], [member lod_surface_height] and [member lod_mesh_growth]; tuning any of those by hand switches this to Custom.
+		</member>
+		<member name="lod_surface_height" type="float" setter="set_lod_surface_height" getter="get_lod_surface_height" default="80.0">
+			Camera height in meters over which the three shading distances ramp from their near-surface (aggressive) values back to full [member lod_distance_start] / [member lod_distance_mid] / [member lod_distance_end]. Above this height the LOD is the plain distance one; at the surface it is [member lod_surface_scale] as far out. Use a low value to make the LOD react sharply as the view leaves the water, a high one for a gradual response.
+		</member>
+		<member name="lod_surface_scale" type="float" setter="set_lod_surface_scale" getter="get_lod_surface_scale" default="0.4">
+			Fraction of the [member lod_distance_start] / [member lod_distance_mid] / [member lod_distance_end] distances kept when the camera is at the water surface. A grazing view compresses the far sea into a thin band of stretched pixels where the waves only alias, so detail is cut much closer in; the distances ramp back to full by [member lod_surface_height] meters. [code]1.0[/code] disables the height response.
+		</member>
 		<member name="normal_mode" type="int" setter="set_normal_mode" getter="get_normal_mode" enum="WaterBody3D.NormalMode" default="0">
 			How the surface's normals and whitecap foam are computed, set on the material through its [code]per_pixel_normals[/code] uniform. [constant NORMAL_MODE_PER_PIXEL] uses the exact slopes and displacement derivatives the ocean FFT also produces ([code]ocean_deriv_tex[/code]), so crests shade smoothly and foam follows the folds at any mesh density -- the realistic choice. [constant NORMAL_MODE_PER_VERTEX] takes finite differences of the displaced mesh, so the shading follows the mesh -- softer, faceted at a coarse [member ocean_grid_resolution], for a stylized look.
 		</member>
@@ -179,7 +200,7 @@
 			With a [member render_extent] past the simulated square: if [code]true[/code], the sea out there is open, deep water (full waves, never dry) instead of the square's edge carried outward. Use it when the square follows the camera or player over a coastline: without it, the far sea takes the edge's seabed -- flat, raised to the ground height, with the shore's wet-sand and foam patterns, and [method sample_height] calling it dry.
 		</member>
 		<member name="render_extent" type="float" setter="set_render_extent" getter="get_render_extent" default="0.0">
-			Side length in meters of the rendered surface, centered on the simulation, for open water that runs to the horizon. Past the simulated square the FFT ocean tiles seamlessly (it's periodic), the ripples settle to still water, and the seabed/shoreline values at the square's edge carry on outward; vertex spacing grows with distance, so a few hundred meters costs only a few hundred extra vertices per side. [code]0[/code] (or anything up to [member ocean_domain_size]) renders just the simulated square -- keep it that way for walled water. Ignored with a [member surface_mesh]. Custom materials need to sample the ocean textures with repeat to match (the built-in one does).
+			Side length in meters of the rendered surface, for open water that runs to the horizon. Past the simulated square the FFT ocean tiles seamlessly (it's periodic), the ripples settle to still water, and the seabed/shoreline values at the square's edge carry on outward; vertex spacing grows with distance, so a few hundred meters costs only a few hundred extra vertices per side. The dense core follows the camera you look through -- the 3D editor view's camera while editing, the current [Camera3D] in Play. [code]0[/code] (or anything up to [member ocean_domain_size]) renders just the simulated square -- keep it that way for walled water. Ignored with a [member surface_mesh]. Custom materials need to sample the ocean textures with repeat to match (the built-in one does).
 		</member>
 		<member name="quality" type="int" setter="set_quality" getter="get_quality" enum="WaterBody3D.Quality" default="3">
 			Preset for mesh density, solver grid sizes and the material's shading tier: LOW and MEDIUM/HIGH set [member grid_resolution] and [member ocean_grid_resolution] (64/64, 96/96, 128/128) and the built-in material's detail-normal and crest-SSS tier. CUSTOM, the default, leaves every property as authored. Only the built-in material is affected; a custom [member water_material] is untouched.
@@ -252,6 +273,21 @@
 		</constant>
 		<constant name="QUALITY_CUSTOM" value="3" enum="Quality">
 			Custom: the per-property values are used as authored.
+		</constant>
+		<constant name="LOD_QUALITY_ULTRA" value="0" enum="LODQuality">
+			Ultra: 150/450/900 m shading distances, ×0.55 at the surface over 120 m, and the densest open-water mesh rings (×1.10 growth). For a shot that needs the far sea held together.
+		</constant>
+		<constant name="LOD_QUALITY_HIGH" value="1" enum="LODQuality">
+			High (the default): 100/350/650 m shading distances, ×0.4 at the surface over 80 m, ×1.15 mesh ring growth. The material's authors' band-limiting.
+		</constant>
+		<constant name="LOD_QUALITY_MEDIUM" value="2" enum="LODQuality">
+			Medium: 70/230/420 m shading distances, ×0.32 at the surface over 60 m, ×1.25 mesh ring growth.
+		</constant>
+		<constant name="LOD_QUALITY_LOW" value="3" enum="LODQuality">
+			Low: 45/140/260 m shading distances, ×0.22 at the surface over 40 m, ×1.40 mesh ring growth. For a sea that is mostly backdrop.
+		</constant>
+		<constant name="LOD_QUALITY_CUSTOM" value="4" enum="LODQuality">
+			Custom: the [code]lod_*[/code] dials are used as authored.
 		</constant>
 		<constant name="NORMAL_MODE_PER_PIXEL" value="0" enum="NormalMode">
 			Normals and foam per pixel from the ocean FFT's exact derivatives.

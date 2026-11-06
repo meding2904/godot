@@ -96,6 +96,17 @@ public:
 		QUALITY_CUSTOM,
 	};
 
+	// Preset for the distance LOD: how soon the shading tiers drop detail and
+	// how fast the open-water mesh's rings spread out. CUSTOM leaves the
+	// lod_* dials as authored.
+	enum LODQuality {
+		LOD_QUALITY_ULTRA,
+		LOD_QUALITY_HIGH,
+		LOD_QUALITY_MEDIUM,
+		LOD_QUALITY_LOW,
+		LOD_QUALITY_CUSTOM,
+	};
+
 	void set_domain_size(Vector2 p_size);
 	Vector2 get_domain_size() const { return domain_size; }
 	void set_grid_resolution(int p_n);
@@ -212,6 +223,35 @@ public:
 	// tier. CUSTOM (the default) leaves every property as authored.
 	void set_quality(Quality p_quality);
 	Quality get_quality() const { return quality; }
+
+	// Distance LOD (the shading tiers and the open-water mesh rings), in
+	// three layers: near (full) -> mid (fine detail gone, normals flat) ->
+	// far (procedural foam/shore gone, displacement flat). The distances
+	// below are measured with a camera high above the surface; as the camera
+	// drops toward the water all three shrink toward lod_surface_scale of
+	// themselves, which cuts the grazing-view detail that would only alias
+	// (and the overdraw that comes with a screen full of stretched water).
+	// lod_surface_height is the height over which they ramp back to full
+	// distance. Presets set all of them at once.
+	void set_lod_quality(LODQuality p_quality);
+	LODQuality get_lod_quality() const { return lod_quality; }
+	void set_lod_distance_start(float p_distance);
+	float get_lod_distance_start() const { return lod_distance_start; }
+	// Where the mid layer is fully in: normals flattened, fine detail gone.
+	void set_lod_distance_mid(float p_distance);
+	float get_lod_distance_mid() const { return lod_distance_mid; }
+	void set_lod_distance_end(float p_distance);
+	float get_lod_distance_end() const { return lod_distance_end; }
+	void set_lod_surface_scale(float p_scale);
+	float get_lod_surface_scale() const { return lod_surface_scale; }
+	void set_lod_surface_height(float p_height);
+	float get_lod_surface_height() const { return lod_surface_height; }
+	// Spacing growth per ring of the open-water mesh past the simulated
+	// square: 1 = uniform spacing, higher = fewer vertices out toward
+	// render_extent (and coarser waves between the dense core and the
+	// horizon).
+	void set_lod_mesh_growth(float p_growth);
+	float get_lod_mesh_growth() const { return lod_mesh_growth; }
 
 	// Light for the sun glitter/specular and the sky's reflection tint.
 	// Empty = the first DirectionalLight3D in the scene, resolved on the
@@ -353,6 +393,16 @@ private:
 	Ref<ShaderMaterial> water_material;
 	bool own_material = false; // true while water_material is the built-in one (safe to recreate)
 	Quality quality = QUALITY_CUSTOM;
+	LODQuality lod_quality = LOD_QUALITY_HIGH;
+	float lod_distance_start = 100.0f;
+	float lod_distance_mid = 350.0f;
+	float lod_distance_end = 650.0f;
+	float lod_surface_scale = 0.40f;
+	float lod_surface_height = 80.0f;
+	float lod_mesh_growth = 1.15f;
+	void _apply_lod_quality();
+	void _apply_lod_shading();
+	void _mark_lod_custom();
 	NodePath sun_path;
 	DirectionalLight3D *sun_light = nullptr;
 	bool warned_no_sun = false;
@@ -426,7 +476,7 @@ private:
 	static PackedByteArray _rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n);
 	// Plane over [-extent/2, extent/2]^2: uniform cells over the simulated
 	// p_inner size, then spacing growing geometrically outward.
-	Ref<Mesh> _build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent) const;
+	Ref<Mesh> _build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent, real_t p_growth) const;
 	Ref<Mesh> _build_footprint_mesh(const Vector<Vector2> &p_tris, const Rect2 &p_bounds, int p_cells) const;
 	void _bind_textures();
 	void _refresh_cpu_cache();
@@ -442,3 +492,4 @@ private:
 
 VARIANT_ENUM_CAST(WaterBody3D::NormalMode);
 VARIANT_ENUM_CAST(WaterBody3D::Quality);
+VARIANT_ENUM_CAST(WaterBody3D::LODQuality);

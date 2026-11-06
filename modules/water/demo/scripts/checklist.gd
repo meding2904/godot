@@ -29,6 +29,7 @@ func _ready() -> void:
 	else:
 		_check_shader()
 		_check_quality()
+		_check_lod_presets()
 		_check_zero_config()
 		await _check_waves()
 		await _check_recenter()
@@ -61,7 +62,7 @@ func _check_shader() -> void:
 		names[uniform.name] = true
 	# depth/screen textures are auto-bound "default textures" and are not
 	# listed; the shading uniforms below prove the new code parsed.
-	if names.has("sun_direction") and names.has("detail_normal") and names.has("foam_color") and names.has("shading_quality") and names.has("absorption"):
+	if names.has("sun_direction") and names.has("detail_normal") and names.has("foam_color") and names.has("shading_quality") and names.has("absorption") and names.has("specular_aa"):
 		_pass("water shader parsed (%d uniforms)" % names.size())
 	else:
 		var sorted := names.keys()
@@ -95,6 +96,20 @@ func _check_quality() -> void:
 		_pass("quality presets set the solver grids (64/128)")
 	else:
 		_fail("quality presets did not apply (low %d, high %d)" % [low, high])
+
+func _check_lod_presets() -> void:
+	var before := _water.lod_quality
+	_water.lod_quality = WaterBody3D.LOD_QUALITY_LOW
+	var low_ok := is_equal_approx(_water.lod_distance_mid, 140.0) and is_equal_approx(_water.lod_distance_end, 260.0) and is_equal_approx(_water.lod_surface_scale, 0.22)
+	_water.lod_quality = WaterBody3D.LOD_QUALITY_ULTRA
+	var ultra_ok := is_equal_approx(_water.lod_distance_mid, 450.0) and is_equal_approx(_water.lod_distance_end, 900.0) and is_equal_approx(_water.lod_surface_height, 120.0)
+	_water.lod_distance_end = 500.0
+	var custom_ok := _water.lod_quality == WaterBody3D.LOD_QUALITY_CUSTOM and is_equal_approx(_water.lod_distance_end, 500.0) and _water.lod_distance_start < _water.lod_distance_mid and _water.lod_distance_mid < _water.lod_distance_end
+	_water.lod_quality = before
+	if low_ok and ultra_ok and custom_ok:
+		_pass("LOD presets set the three layers' dials, and a hand-tuned dial drops to Custom")
+	else:
+		_fail("LOD presets/dials wrong (low %s, ultra %s, custom %s)" % [low_ok, ultra_ok, custom_ok])
 
 func _check_zero_config() -> void:
 	var has_internal := _water.get_child_count(true) > _water.get_child_count()

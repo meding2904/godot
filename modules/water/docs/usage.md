@@ -24,7 +24,9 @@ scene. The defaults are an open sea: 128² solver grids,
 a 64 m ocean tile, `render_extent` 1000, the interactive ripple square follows
 the camera (`auto_recenter`), and diving grades the frame (`underwater_effect`,
 provided the scene has a `WorldEnvironment`). Add the node: it runs the waves
-right there in the editor, and in Play.
+right there in the editor, and in Play; its mesh's dense core follows the
+camera you look through (the 3D view's in the editor, the current `Camera3D`
+in Play).
 
 ```gdscript
 var water := WaterBody3D.new()
@@ -206,14 +208,30 @@ code). The ones worth touching first:
 | `deep_color` / `absorption` | dark blue / 0.22 | How quickly deep water hides what's behind it |
 | `reflection_strength` | 1.0 | Sky reflection weight (0 = flat, matte water) |
 | `specular_strength` / `specular_shininess` | 0.45 / 480 | Sun glitter |
+| `specular_aa` | 1.0 | Geometric specular AA: widens and dims the sun glint by how much the normal changes across a pixel, so a highlight formed from sub-pixel wave slopes spreads into a soft band instead of flickering. 0 = off |
 | `crest_sss` | 0.6 | Subsurface glow on backlit crests |
 | `detail_normal_strength` / `_scale` | 0.35 / 0.35 | Fine surface texture (generated at startup) |
-| `distance_fade_start` / `_end` | 100 / 650 | Distance band-limiting and the LOD tiers: past `_end` the detail normal, crest glow, foam and shore lace are skipped and the geometry flattens |
 | `foam_threshold` / `foam_persistence` | node props | Whitecaps and how long they linger |
 
 `quality` on the node picks presets: `Low` (64 grids, no detail normals, no
 crest glow), `Medium` (96, one layer), `High` (128, two layers + glow),
 `Custom` (leave properties as authored).
+
+`lod_quality` picks the distance-LOD preset: `Ultra` (150/450/900 m, ×0.55 at
+the surface over 120 m, ×1.10 mesh rings), `High` (100/350/650, ×0.40 over
+80 m, ×1.15 — the default), `Medium` (70/230/420, ×0.32 over 60 m, ×1.25),
+`Low` (45/140/260, ×0.22 over 40 m, ×1.40) and `Custom`. The three distances
+are the layers' boundaries: near is full up to `lod_distance_start`, the mid
+layer (fine detail gone, per-pixel normals flattened, procedural foam/shore
+averaged, displaced geometry flat) is complete at `lod_distance_mid`, and the
+remaining shading (crest/rim/swash skipped, sky glow faded) is flat at
+`lod_distance_end`. The dials drive the material's `distance_fade_start` /
+`_mid` / `_end` uniforms; set them on the node, not the material.
+`lod_surface_scale` is what they shrink to at the surface (cutting the
+aliased, overdraw-heavy grazing view) and `lod_surface_height` is the height
+over which they return to full; `lod_mesh_growth` is how much further each
+open-water mesh ring sits than the last. Tuning any dial by hand switches the
+preset to `Custom`.
 
 `screen_space` (off by default) rebuilds the material with a screen-sampling
 variant and adds refraction. Before relying on it, run
@@ -264,7 +282,7 @@ EMISSION = caustics_color.rgb * (c.r * c.g * caustics_strength);  // green = ove
 | Shoreline never gets wet/dry | `seabed_from_floor` off, or the seabed's static body is not in `seabed_collision_mask`. |
 | Boat does not move | Propeller above the waterline (`propeller_position`), or no water path on the buoyancy node. |
 | Water slides when the player moves | Use `recenter()`, not the node's transform. |
-| Speckle/shimmmer at distance | Lower `distance_fade_start`/`_end` on the material, or enable FXAA/SMAA — see "Aliasing" in the module README. |
+| Speckle/shimmmer at distance | Lower `lod_distance_start`/`_end` (or `lod_surface_scale` near the water) on the node, or enable FXAA/SMAA — see "Aliasing" in the module README. |
 | Overbright/white water | A custom `water_material` that samples the screen texture: confirm with `demo/scenes/screen_probe.tscn`. |
 | The water node moves itself, or ignores where you put it | `auto_recenter` (on by default for open water) is following the camera; disable it, or give the water a `surface_mesh`. |
 
@@ -275,10 +293,14 @@ EMISSION = caustics_color.rgb * (c.r * c.g * caustics_strength);  // green = ove
 - `render_extent` grows the vertex count (graded outward, not uniform), and
   the per-pixel normal path costs a few extra texture fetches; `normal_mode =
   Per Vertex` is cheaper and faceted.
-- Distant water gets cheaper by itself: past `distance_fade_end` the LOD
-  skips the procedural detail and flattens the displaced geometry (a
-  far-dominated view measured about 40% cheaper on an RTX 2060; near water is
-  unchanged). Lower `distance_fade_start` / `_end` for a cheaper far sea.
+- Distant water gets cheaper by itself: by the mid distance the per-pixel
+  normal/foam fetch is skipped and the fine detail is gone, and the displaced
+  geometry has flattened (a far-dominated view measured about 40% cheaper on
+  an RTX 2060; near water is unchanged). The distances move in as the camera
+  nears the surface, where a grazing view would otherwise spend the whole
+  screen on stretched, aliasing water -- `lod_quality` presets that, and lower
+  `lod_distance_start` / `_mid` / `_end` or `lod_surface_scale` for a cheaper
+  far sea.
 - `caustics_enabled` adds a draw pass every frame, and `screen_space` adds a
   screen copy; both are off by default.
 - At hundreds of kilometers from the origin, float precision jitters like any

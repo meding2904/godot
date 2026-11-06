@@ -82,7 +82,10 @@ water there. The surface draws only the side facing the camera (the top from
 above, the underside from below), and its shaders take their clock from the
 node's `water_time` parameter rather than `TIME`, so the clock stops with the
 node instead of free-running on the editor's redraws. The waves run in the
-editor as well as in Play: adding the node is the whole setup.
+editor as well as in Play: adding the node is the whole setup. The mesh's
+dense core follows the camera you look through — the 3D editor view's camera
+while editing, the current `Camera3D` in Play — so the fine vertices sit under
+the view and the spacing grows out toward the horizon.
 
 **An endless sea that follows the player.** The FFT ocean is periodic and
 fixed to the world (it's sampled at world X/Z, by the shader and by
@@ -215,28 +218,44 @@ meanwhile.
 ## Aliasing and distance LOD
 
 Distant water aliases from several different sources, so the material has
-distance LOD tiers (`distance_fade_start` / `distance_fade_end` on the
-material) and band-limits each one:
+three distance LOD layers (`lod_distance_start` / `_mid` / `_end` on the
+node) and band-limits each one:
 
-- Mid distance: the tiling detail normal drops from two layers to one, and the
-  ripple layer's slope is only fetched inside its own square (past it the
-  surface is the still water level, so there is no slope to draw).
-- Procedural foam/shore noise has no mip chain: its lace melts to its average
-  value, the waterline jitter is dropped, and foam, shore foam and the
-  waterline rim fade out with distance, as whitecaps do through the air.
-- The tiling detail normal has a mip chain and anisotropic sampling
-  (`filter_linear_mipmap_anisotropic`).
-- Sub-pixel waves average out: the per-pixel normal is blended toward up, and
-  the sun glint widens (shininess toward 90) and dims.
-- Past `distance_fade_end` the far tier skips the detail normal, crest glow,
-  whitecap/shore lace, waterline rim and swash noise outright, keeps the
-  normal flat, and fades the vertex displacement to the still level so the
-  horizon silhouette stops shimmering.
+- Near layer: full detail up to `_start`.
+- Mid layer (`_start` to `_mid`): the tiling detail normal drops from two
+  layers to one, its perturbation fades out, the per-pixel FFT/ripple/wake
+  normal is blended toward up and then the fetch is skipped outright, the
+  glint widens (shininess toward 90) and dims, the procedural foam/shore lace
+  melts to its average and fades, and the vertex displacement flattens to the
+  still level so the horizon silhouette stops shimmering. This is where the
+  aliasing-prone detail goes; it is complete at `_mid`.
+- Far layer (`_mid` to `_end`): the remaining crest glow, whitecap/shore
+  lace, waterline rim and swash noise fade out and their fetches are skipped,
+  the sky-reflection sun glow fades, and the glint dims to its final value;
+  the surface is then the flat analytic water, with nothing left to shimmer.
+- Independent of the layers, the tiling detail normal has a mip chain and
+  anisotropic sampling (`filter_linear_mipmap_anisotropic`), and the sun
+  glint gets geometric specular AA: the normal's screen-space variance widens
+  the lobe (Blinn-Phong variances add) and lowers its peak, so a highlight
+  formed from sub-pixel wave slopes spreads into a soft band instead of
+  flickering frame to frame (`specular_aa` on the material, 0 = off).
 
 A view made mostly of near water is unchanged; a far-dominated one (the whole
 screen past the fade distance) measured about 40% cheaper on an RTX 2060 at
-1280x720. Lower `distance_fade_start` / `distance_fade_end` for a cheaper far
-sea (the geometry flattens with them), higher for more detail.
+1280x720. Lower the distances for a cheaper far sea (the geometry flattens
+with them), higher for more detail.
+
+The distances are view-relative: as the camera drops toward the surface all
+three shrink toward `lod_surface_scale` of themselves (by `lod_surface_height`
+m they are back in full), and each drawing camera gets its own. Skimming the
+water compresses the far sea into a thin band of stretched pixels where the
+waves only alias and every one of those pixels still runs the fragment work,
+so a low eye cuts detail much closer in. `lod_quality` sets the whole LOD at
+once -- `Ultra`, `High` (the default), `Medium`, `Low`, or `Custom` to leave
+the dials as authored -- and the dials (`lod_distance_start`, `_mid`, `_end`,
+`_surface_scale`, `_surface_height`, plus `lod_mesh_growth` for how fast the
+open-water mesh's rings spread toward `render_extent`) can be tuned
+individually; a hand-tuned dial switches the preset to `Custom`.
 
 Engine-side options, cheapest first: `msaa_3d` (polygon edges, e.g. the
 horizon silhouette), `screen_space_aa` FXAA/SMAA (post-process; does smooth the
