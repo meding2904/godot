@@ -67,6 +67,7 @@ public:
 		RID collider;
 		ObjectID collider_id;
 		int collider_shape = 0;
+		Vector3 local_velocity; // of each body at the contact point, spin included
 		Vector3 collider_velocity;
 	};
 
@@ -174,8 +175,7 @@ private:
 	// free body in a GPU scene.
 	static constexpr uint32_t SOLVER_ITERS_DEFAULT_POS = 4;
 	static constexpr uint32_t SOLVER_ITERS_DEFAULT_VEL = 1;
-	static constexpr uint32_t SOLVER_ITERS_JOINTED_POS = 8;
-	static constexpr uint32_t SOLVER_ITERS_JOINTED_VEL = 2;
+	// Jointed bodies: the jointed_*_iterations project settings.
 
 	bool _is_dynamic() const;
 	void _destroy_actor();
@@ -334,9 +334,8 @@ public:
 	Vector3 get_center_of_mass_local() const;
 	Basis get_principal_inertia_axes() const;
 	Vector3 get_inverse_inertia() const;
-	// Velocity of the body's material at a world-space point, spin included (above MIN_CARRIED_SPIN).
+	// Velocity of the body's material at a world-space point, spin included.
 	Vector3 get_velocity_at_position(const Vector3 &p_position) const;
-	static constexpr real_t MIN_CARRIED_SPIN = 0.05; // rad/s
 
 	GodotPhysXDirectBodyState3D *get_direct_state();
 

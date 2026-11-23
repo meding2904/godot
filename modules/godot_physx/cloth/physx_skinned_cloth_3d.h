@@ -71,6 +71,14 @@ class PhysXSkinnedCloth3D : public Node3D {
 	bool use_world_gravity = true;
 	Vector3 fixed_gravity = Vector3(0, -9.8f, 0);
 	Vector3 extra_acceleration;
+	bool wind_enabled = true;
+	NodePath wind_area; // optional Area3D whose wind settings drive the cloth
+	Vector3 wind; // constant base breeze, on top of the area
+	float wind_turbulence = 0.4f;
+	float drag = 1.0f;
+	float lift = 0.2f;
+	double wind_time = 0.0;
+	Vector3 effective_wind;
 	bool self_collision = false;
 	float self_collision_thickness = 0.02f;
 	float collision_radius_scale = 1.0f;
@@ -169,7 +177,7 @@ private:
 	Transform3D skeleton_xform; // where the skeleton is drawn, as last placed
 	PackedFloat32Array captured_bones; // per skin bind: skeleton_xform * global pose * bind pose (mat4)
 	PackedFloat32Array captured_capsules; // per capsule: a.xyz ra, b.xyz rb (world)
-	PackedFloat32Array captured_boxes; // per box: centre.xyz active, half-axes x, y, z (world)
+	PackedFloat32Array captured_boxes; // per box: center.xyz active, half-axes x, y, z (world)
 	bool has_capture = false;
 	uint64_t last_step_frame = 0;
 	// Game time (the process delta, so Engine.time_scale and pausing apply) not yet simulated; a step consumes it.
@@ -228,6 +236,20 @@ public:
 	Vector3 get_fixed_gravity() const { return fixed_gravity; }
 	void set_extra_acceleration(const Vector3 &p_a) { extra_acceleration = p_a; }
 	Vector3 get_extra_acceleration() const { return extra_acceleration; }
+	void set_wind_enabled(bool p_enabled) { wind_enabled = p_enabled; }
+	bool is_wind_enabled() const { return wind_enabled; }
+	void set_wind_area(const NodePath &p_path) { wind_area = p_path; }
+	NodePath get_wind_area() const { return wind_area; }
+	void set_wind(const Vector3 &p_wind) { wind = p_wind; }
+	Vector3 get_wind() const { return wind; }
+	void set_wind_turbulence(float p_turbulence) { wind_turbulence = MAX(p_turbulence, 0.0f); }
+	float get_wind_turbulence() const { return wind_turbulence; }
+	void set_drag(float p_drag) { drag = MAX(p_drag, 0.0f); }
+	float get_drag() const { return drag; }
+	void set_lift(float p_lift) { lift = MAX(p_lift, 0.0f); }
+	float get_lift() const { return lift; }
+	// The air velocity of the last step (m/s): the breeze, the area and the gusts together.
+	Vector3 get_effective_wind() const { return effective_wind; }
 	// The gravity the cloth steps with right now (world or fixed, + extra_acceleration), m/s^2.
 	Vector3 get_effective_gravity() const;
 	void set_collide_with_body(bool p_enabled);
